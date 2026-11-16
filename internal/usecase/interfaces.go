@@ -36,3 +36,10 @@ type MessageRepository interface {
 	Create(ctx context.Context, msg domain.Message) (int64, error)
 	ListByChat(ctx context.Context, chatID int64, limit, offset int) ([]domain.Message, error)
 }
+
+// AlertRepository хранит уведомления и ограничивает операции компанией.
+type AlertRepository interface {
+	Create(ctx context.Context, alert domain.Alert) (int64, error)
+	ListActiveByCompany(ctx context.Context, companyID int64) ([]domain.Alert, error)
+	Resolve(ctx context.Context, companyID, id int64) error
+}
