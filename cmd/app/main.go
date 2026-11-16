@@ -18,6 +18,7 @@ func main() {
 	var messageUsecase *usecase.MessageUsecase
 	var contactUsecase *usecase.ContactUsecase
 	var chatUsecase *usecase.ChatUsecase
+	var accountDailyStatsUsecase *usecase.AccountDailyStatsUsecase
 
 	if err != nil {
 		log.Printf("PostgreSQL connection failed: %v (run 'docker compose up -d' to start database)", err)
@@ -31,14 +32,16 @@ func main() {
 		messageRepo := postgres.NewMessageStorage(db)
 		contactRepo := postgres.NewContactStorage(db)
 		chatRepo := postgres.NewChatStorage(db)
+		accountDailyStatsRepo := postgres.NewAccountDailyStatsStorage(db)
 
 		accountUsecase = usecase.NewAccountUsecase(accountRepo)
 		employeeUsecase = usecase.NewEmployeeUsecase(employeeRepo)
 		messageUsecase = usecase.NewMessageUsecase(messageRepo)
 		contactUsecase = usecase.NewContactUsecase(contactRepo)
 		chatUsecase = usecase.NewChatUsecase(chatRepo)
+		accountDailyStatsUsecase = usecase.NewAccountDailyStatsUsecase(accountDailyStatsRepo)
 	}
 
-	h := handler.New(accountUsecase, employeeUsecase, messageUsecase, contactUsecase, chatUsecase)
+	h := handler.New(accountUsecase, employeeUsecase, messageUsecase, contactUsecase, chatUsecase, accountDailyStatsUsecase)
 	log.Fatal(h.Run(cfg.Addr))
 }
