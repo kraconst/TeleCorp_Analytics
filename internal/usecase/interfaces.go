@@ -63,4 +63,11 @@ type AccountDailyStatsRepository interface {
 	GetDashboard(ctx context.Context, companyID int64, from, to time.Time) (*domain.DashboardStats, error)
 	GetAccountRatings(ctx context.Context, companyID int64, from, to time.Time) ([]domain.AccountRating, error)
 }
+
+// AlertRepository хранит уведомления и ограничивает операции компанией.
+type AlertRepository interface {
+	Create(ctx context.Context, alert domain.Alert) (int64, error)
+	ListActiveByCompany(ctx context.Context, companyID int64) ([]domain.Alert, error)
+	Resolve(ctx context.Context, companyID, id int64) error
+}
 }

@@ -81,6 +81,49 @@ curl -X POST http://localhost:8080/accounts \
 Invoke-RestMethod -Method Post -Uri http://localhost:8080/accounts -ContentType "application/json" -Body '{"phone":"+79990000000","username":"@new","employee_name":"Ира"}'
 ```
 
+## Уведомления
+
+| Метод | Путь | Ответ |
+|-------|------|-------|
+| GET | `/alerts` | `200` — активные уведомления компании, новые первыми; пустой список — `[]` |
+| POST | `/alerts/:id/resolve` | `200` — обработано, `404` — уведомление не найдено в компании, `400` — некорректный ID |
+
+Типы: `no_reply`, `complaint`, `refusal`, `negative`, `urgent`. Закрытие сохраняет
+`resolved_at`; повторный POST успешен и не изменяет время первого закрытия.
+После обработки уведомление исчезает из активной ленты, запись остаётся в БД.
+Как и остальные текущие ручки, API пока использует компанию с ID 1; JWT и роли
+будут добавлены отдельно. Чтение и закрытие в хранилище ограничены `company_id`.
+
+Создание предусмотрено через `AlertUsecase.Create` для будущих обработчиков
+событий Telegram и AI. Автоматическое обнаружение проблем и отправка во внешние
+каналы в этой реализации не запускаются. Пока таблица `chats` разрабатывается
+в другой ветке, `chat_id` хранится как положительный ID без внешнего ключа —
+аналогично текущей таблице `messages`.
+
+При первом запуске PostgreSQL с новым томом Compose применяет up-миграции
+`000001`, `000002` и `000005`. Номера `000003` и `000004` заняты отдельными
+ветками контактов/чатов и статистики. Для существующего тома выполните из корня
+проекта (PowerShell):
+
+```powershell
+Get-Content -Raw migrations/000005_create_alerts.up.sql | docker compose exec -T postgres psql -U telecorp -d telecorp_db -v ON_ERROR_STOP=1
+```
+
+Если PostgreSQL недоступен, демонстрационная лента работает в памяти процесса:
+уведомления можно закрыть, а при перезапуске сервера демонстрационные данные
+восстанавливаются.
+
+Проверки уведомлений:
+
+```powershell
+go test ./internal/usecase ./internal/handler
+$env:TEST_POSTGRES_DSN = "postgres://telecorp:telecorp_secret@localhost:5432/telecorp_db?sslmode=disable"
+go test ./internal/storage/postgres -run TestAlertPostgresLifecycle -v
+```
+
+Интеграционный тест создаёт отдельную временную схему и удаляет её после проверки;
+нужны права на создание схем. Без `TEST_POSTGRES_DSN` он пропускается.
+
 ## Тестовое подключение Telegram
 
 Отдельная команда `cmd/telegram-dev` подключает существующий аккаунт через

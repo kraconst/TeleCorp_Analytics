@@ -18,6 +18,8 @@ type Handler struct {
 	contactUsecase           *usecase.ContactUsecase
 	chatUsecase              *usecase.ChatUsecase
 	accountDailyStatsUsecase *usecase.AccountDailyStatsUsecase
+	alertUsecase             *usecase.AlertUsecase
+	demoAlerts               *demoAlertStore
 }
 
 func New(
@@ -27,6 +29,7 @@ func New(
 	contactUsecase *usecase.ContactUsecase,
 	chatUsecase *usecase.ChatUsecase,
 	accountDailyStatsUsecase *usecase.AccountDailyStatsUsecase,
+	alertUsecase *usecase.AlertUsecase,
 ) *Handler {
 	return &Handler{
 		accountUsecase:           accountUsecase,
@@ -35,6 +38,8 @@ func New(
 		contactUsecase:           contactUsecase,
 		chatUsecase:              chatUsecase,
 		accountDailyStatsUsecase: accountDailyStatsUsecase,
+		alertUsecase:             alertUsecase,
+		demoAlerts:               newDemoAlertStore(),
 	}
 }
 
@@ -176,6 +181,10 @@ func (h *Handler) Run(addr string) error {
 	// Analytics
 	r.GET("/analytics/dashboard", h.GetDashboard)
 	r.GET("/analytics/accounts", h.GetAccountRatings)
+
+	// Alerts
+	r.GET("/alerts", h.ListAlerts)
+	r.POST("/alerts/:id/resolve", h.ResolveAlert)
 
 	return r.Run(addr)
 }
