@@ -14,6 +14,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./migrations/000001_init_schema.up.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./migrations/000002_create_messages.up.sql:/docker-entrypoint-initdb.d/02-messages.sql:ro
+      - ./migrations/000005_create_alerts.up.sql:/docker-entrypoint-initdb.d/05-alerts.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U telecorp -d telecorp_db"]
       interval: 5s
