@@ -14,13 +14,17 @@ type Handler struct {
 	accountUsecase  *usecase.AccountUsecase
 	employeeUsecase *usecase.EmployeeUsecase
 	messageUsecase  *usecase.MessageUsecase
+	alertUsecase    *usecase.AlertUsecase
+	demoAlerts      *demoAlertStore
 }
 
-func New(accountUsecase *usecase.AccountUsecase, employeeUsecase *usecase.EmployeeUsecase, messageUsecase *usecase.MessageUsecase) *Handler {
+func New(accountUsecase *usecase.AccountUsecase, employeeUsecase *usecase.EmployeeUsecase, messageUsecase *usecase.MessageUsecase, alertUsecase *usecase.AlertUsecase) *Handler {
 	return &Handler{
 		accountUsecase:  accountUsecase,
 		employeeUsecase: employeeUsecase,
 		messageUsecase:  messageUsecase,
+		alertUsecase:    alertUsecase,
+		demoAlerts:      newDemoAlertStore(),
 	}
 }
 
@@ -73,6 +77,10 @@ func (h *Handler) Run(addr string) error {
 
 	// Messages
 	r.GET("/chats/:id/messages", h.ListMessagesByChat)
+
+	// Alerts
+	r.GET("/alerts", h.ListAlerts)
+	r.POST("/alerts/:id/resolve", h.ResolveAlert)
 
 	return r.Run(addr)
 }
