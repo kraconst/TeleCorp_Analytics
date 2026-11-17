@@ -196,7 +196,14 @@ func TestContactUsecase_GetByID(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		uc := usecase.NewContactUsecase(&mockContactRepo{})
-		if _, err := uc.GetByID(ctx, 0); !errors.Is(err, domain.ErrValidation) {
+		if _, err := uc.GetByID(ctx, 1, 0); !errors.Is(err, domain.ErrValidation) {
+			t.Errorf("expected ErrValidation, got %v", err)
+		}
+	})
+
+	t.Run("invalid company_id", func(t *testing.T) {
+		uc := usecase.NewContactUsecase(&mockContactRepo{})
+		if _, err := uc.GetByID(ctx, 0, 1); !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("expected ErrValidation, got %v", err)
 		}
 	})
@@ -208,20 +215,33 @@ func TestContactUsecase_GetByID(t *testing.T) {
 			},
 		}
 		uc := usecase.NewContactUsecase(repo)
-		_, err := uc.GetByID(ctx, 123)
+		_, err := uc.GetByID(ctx, 1, 123)
 		if !errors.Is(err, domain.ErrNotFound) {
 			t.Errorf("expected ErrNotFound, got %v", err)
+		}
+	})
+
+	t.Run("company mismatch (IDOR)", func(t *testing.T) {
+		repo := &mockContactRepo{
+			getByIDFn: func(ctx context.Context, id int64) (*domain.Contact, error) {
+				return &domain.Contact{ID: id, CompanyID: 2, Name: "Alice"}, nil
+			},
+		}
+		uc := usecase.NewContactUsecase(repo)
+		_, err := uc.GetByID(ctx, 1, 5)
+		if !errors.Is(err, domain.ErrNotFound) {
+			t.Errorf("expected ErrNotFound for company mismatch, got %v", err)
 		}
 	})
 
 	t.Run("success", func(t *testing.T) {
 		repo := &mockContactRepo{
 			getByIDFn: func(ctx context.Context, id int64) (*domain.Contact, error) {
-				return &domain.Contact{ID: id, Name: "Alice"}, nil
+				return &domain.Contact{ID: id, CompanyID: 1, Name: "Alice"}, nil
 			},
 		}
 		uc := usecase.NewContactUsecase(repo)
-		c, err := uc.GetByID(ctx, 5)
+		c, err := uc.GetByID(ctx, 1, 5)
 		if err != nil || c.Name != "Alice" {
 			t.Fatalf("unexpected result: %v, %+v", err, c)
 		}

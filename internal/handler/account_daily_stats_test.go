@@ -25,7 +25,7 @@ func (m *mockDailyStatsRepoForHandler) Upsert(ctx context.Context, stats domain.
 func (m *mockDailyStatsRepoForHandler) IncrementCounters(ctx context.Context, accountID int64, day time.Time, in, out, contacts int) error {
 	return nil
 }
-func (m *mockDailyStatsRepoForHandler) GetByAccountAndDateRange(ctx context.Context, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
+func (m *mockDailyStatsRepoForHandler) GetByAccountAndDateRange(ctx context.Context, companyID, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
 	return nil, nil
 }
 func (m *mockDailyStatsRepoForHandler) GetByCompanyAndDateRange(ctx context.Context, companyID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
@@ -44,10 +44,10 @@ func (m *mockDailyStatsRepoForHandler) GetAccountRatings(ctx context.Context, co
 	return nil, nil
 }
 
-func setupTestRouter(statsUc *usecase.AccountDailyStatsUsecase) *gin.Engine {
+func setupStatsTestRouter(statsUc *usecase.AccountDailyStatsUsecase) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	h := handler.New(nil, nil, nil, statsUc)
+	h := handler.New(nil, nil, nil, nil, nil, statsUc, nil, nil, nil, nil)
 
 	r.GET("/analytics/dashboard", h.GetDashboard)
 	r.GET("/analytics/accounts", h.GetAccountRatings)
@@ -55,7 +55,7 @@ func setupTestRouter(statsUc *usecase.AccountDailyStatsUsecase) *gin.Engine {
 }
 
 func TestHandler_GetDashboard_MockFallback(t *testing.T) {
-	r := setupTestRouter(nil)
+	r := setupStatsTestRouter(nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/analytics/dashboard", nil)
 	w := httptest.NewRecorder()
@@ -86,8 +86,8 @@ func TestHandler_GetDashboard_WithUsecase(t *testing.T) {
 			}, nil
 		},
 	}
-	uc := usecase.NewAccountDailyStatsUsecase(repo)
-	r := setupTestRouter(uc)
+	uc := usecase.NewAccountDailyStatsUsecase(repo, nil)
+	r := setupStatsTestRouter(uc)
 
 	req, _ := http.NewRequest(http.MethodGet, "/analytics/dashboard?from=2026-01-01&to=2026-01-10", nil)
 	w := httptest.NewRecorder()
@@ -107,7 +107,7 @@ func TestHandler_GetDashboard_WithUsecase(t *testing.T) {
 }
 
 func TestHandler_GetDashboard_InvalidDates(t *testing.T) {
-	r := setupTestRouter(nil)
+	r := setupStatsTestRouter(nil)
 
 	t.Run("invalid from format", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, "/analytics/dashboard?from=01-01-2026", nil)
@@ -132,7 +132,7 @@ func TestHandler_GetDashboard_InvalidDates(t *testing.T) {
 
 func TestHandler_GetAccountRatings(t *testing.T) {
 	t.Run("mock fallback", func(t *testing.T) {
-		r := setupTestRouter(nil)
+		r := setupStatsTestRouter(nil)
 
 		req, _ := http.NewRequest(http.MethodGet, "/analytics/accounts", nil)
 		w := httptest.NewRecorder()
@@ -163,8 +163,8 @@ func TestHandler_GetAccountRatings(t *testing.T) {
 				}, nil
 			},
 		}
-		uc := usecase.NewAccountDailyStatsUsecase(repo)
-		r := setupTestRouter(uc)
+		uc := usecase.NewAccountDailyStatsUsecase(repo, nil)
+		r := setupStatsTestRouter(uc)
 
 		req, _ := http.NewRequest(http.MethodGet, "/analytics/accounts?from=2026-02-01&to=2026-02-15", nil)
 		w := httptest.NewRecorder()

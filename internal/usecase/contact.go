@@ -74,11 +74,21 @@ func (u *ContactUsecase) FindOrCreateByTelegramID(ctx context.Context, companyID
 	})
 }
 
-func (u *ContactUsecase) GetByID(ctx context.Context, id int64) (*domain.Contact, error) {
+func (u *ContactUsecase) GetByID(ctx context.Context, companyID, id int64) (*domain.Contact, error) {
+	if companyID <= 0 {
+		return nil, fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
 	if id <= 0 {
 		return nil, fmt.Errorf("%w: invalid id", domain.ErrValidation)
 	}
-	return u.contacts.GetByID(ctx, id)
+	contact, err := u.contacts.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if contact.CompanyID != companyID {
+		return nil, fmt.Errorf("%w: contact not found", domain.ErrNotFound)
+	}
+	return contact, nil
 }
 
 func (u *ContactUsecase) ListByCompany(ctx context.Context, companyID int64) ([]domain.Contact, error) {

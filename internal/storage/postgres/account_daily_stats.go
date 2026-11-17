@@ -69,15 +69,16 @@ func (s *AccountDailyStatsStorage) IncrementCounters(ctx context.Context, accoun
 	return nil
 }
 
-func (s *AccountDailyStatsStorage) GetByAccountAndDateRange(ctx context.Context, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
+func (s *AccountDailyStatsStorage) GetByAccountAndDateRange(ctx context.Context, companyID, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
 	query := `
-		SELECT account_id, day, messages_in, messages_out, active_chats, new_contacts, avg_response_time
-		FROM account_daily_stats
-		WHERE account_id = $1 AND day >= $2 AND day <= $3
-		ORDER BY day ASC
+		SELECT s.account_id, s.day, s.messages_in, s.messages_out, s.active_chats, s.new_contacts, s.avg_response_time
+		FROM account_daily_stats s
+		JOIN accounts a ON a.id = s.account_id
+		WHERE s.account_id = $1 AND a.company_id = $2 AND s.day >= $3 AND s.day <= $4
+		ORDER BY s.day ASC
 	`
 	stats := make([]domain.AccountDailyStats, 0)
-	err := s.db.SelectContext(ctx, &stats, query, accountID, from.Format("2006-01-02"), to.Format("2006-01-02"))
+	err := s.db.SelectContext(ctx, &stats, query, accountID, companyID, from.Format("2006-01-02"), to.Format("2006-01-02"))
 	if err != nil {
 		return nil, fmt.Errorf("get account daily stats by account and range: %w", err)
 	}
@@ -105,10 +106,29 @@ func (s *AccountDailyStatsStorage) GetDashboard(ctx context.Context, companyID i
 		SELECT
 			COALESCE(SUM(s.messages_in), 0) AS messages_in,
 			COALESCE(SUM(s.messages_out), 0) AS messages_out,
-			COALESCE(SUM(s.active_chats), 0) AS active_chats,
+			COALESCE((
+				SELECT MAX(day_active)
+				FROM (
+					SELECT SUM(sub_s.active_chats) AS day_active
+					FROM account_daily_stats sub_s
+					JOIN accounts sub_a ON sub_a.id = sub_s.account_id
+					WHERE sub_a.company_id = $1 AND sub_s.day >= $2 AND sub_s.day <= $3
+					GROUP BY sub_s.day
+				) daily_totals
+			), 0) AS active_chats,
 			COALESCE(SUM(s.new_contacts), 0) AS new_contacts,
-			COALESCE(AVG(s.avg_response_time), 0)::BIGINT AS avg_response_time,
-			0 AS unanswered_chats
+			COALESCE(
+				CASE
+					WHEN SUM(s.messages_out) > 0
+					THEN SUM(s.avg_response_time * s.messages_out) / SUM(s.messages_out)
+					ELSE 0
+				END, 0)::BIGINT AS avg_response_time,
+			(
+				SELECT COUNT(*)
+				FROM chats c
+				JOIN accounts acc ON acc.id = c.account_id
+				WHERE acc.company_id = $1 AND c.awaiting_reply_since IS NOT NULL
+			) AS unanswered_chats
 		FROM account_daily_stats s
 		JOIN accounts a ON a.id = s.account_id
 		WHERE a.company_id = $1 AND s.day >= $2 AND s.day <= $3
@@ -133,9 +153,14 @@ func (s *AccountDailyStatsStorage) GetAccountRatings(ctx context.Context, compan
 			COALESCE(SUM(s.messages_in), 0) AS messages_in,
 			COALESCE(SUM(s.messages_out), 0) AS messages_out,
 			COALESCE(SUM(s.messages_in + s.messages_out), 0) AS total_messages,
-			COALESCE(SUM(s.active_chats), 0) AS active_chats,
+			COALESCE(MAX(s.active_chats), 0) AS active_chats,
 			COALESCE(SUM(s.new_contacts), 0) AS new_contacts,
-			COALESCE(AVG(s.avg_response_time), 0)::BIGINT AS avg_response_time
+			COALESCE(
+				CASE
+					WHEN SUM(s.messages_out) > 0
+					THEN SUM(s.avg_response_time * s.messages_out) / SUM(s.messages_out)
+					ELSE 0
+				END, 0)::BIGINT AS avg_response_time
 		FROM accounts a
 		LEFT JOIN employees e ON a.employee_id = e.id
 		LEFT JOIN account_daily_stats s ON s.account_id = a.id AND s.day >= $2 AND s.day <= $3

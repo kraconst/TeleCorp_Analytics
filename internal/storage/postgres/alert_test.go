@@ -67,7 +67,7 @@ func TestAlertPostgresLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := postgres.NewAlertStorage(db)
-	u := usecase.NewAlertUsecase(repo)
+	u := usecase.NewAlertUsecase(repo, nil, nil)
 	createdAt := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
 	create := func(companyID int64, kind domain.AlertType) int64 {
 		t.Helper()

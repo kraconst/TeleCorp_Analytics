@@ -9,11 +9,17 @@ import (
 )
 
 type AlertUsecase struct {
-	alerts AlertRepository
+	alerts   AlertRepository
+	chats    ChatRepository
+	accounts AccountRepository
 }
 
-func NewAlertUsecase(alerts AlertRepository) *AlertUsecase {
-	return &AlertUsecase{alerts: alerts}
+func NewAlertUsecase(alerts AlertRepository, chats ChatRepository, accounts AccountRepository) *AlertUsecase {
+	return &AlertUsecase{
+		alerts:   alerts,
+		chats:    chats,
+		accounts: accounts,
+	}
 }
 
 // Create вызывается обработчиками событий, когда в диалоге обнаружена проблема.
@@ -32,6 +38,22 @@ func (u *AlertUsecase) Create(ctx context.Context, alert domain.Alert) (int64, e
 	}
 	if alert.CreatedAt.IsZero() {
 		alert.CreatedAt = time.Now().UTC()
+	}
+
+	if u.chats != nil {
+		chat, err := u.chats.GetByID(ctx, alert.ChatID)
+		if err != nil {
+			return 0, err
+		}
+		if u.accounts != nil {
+			acc, err := u.accounts.GetByID(ctx, chat.AccountID)
+			if err != nil {
+				return 0, err
+			}
+			if acc.CompanyID != alert.CompanyID {
+				return 0, fmt.Errorf("%w: chat belongs to a different company", domain.ErrForbidden)
+			}
+		}
 	}
 
 	id, err := u.alerts.Create(ctx, alert)

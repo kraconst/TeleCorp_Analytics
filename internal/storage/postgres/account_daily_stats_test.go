@@ -18,87 +18,87 @@ import (
 	"github.com/kraconst/GO_server/internal/storage/postgres"
 )
 
-type mockDriver struct {
+type statsMockDriver struct {
 	mu           sync.Mutex
 	queryHandler func(query string, args []driver.Value) (driver.Rows, error)
 	execHandler  func(query string, args []driver.Value) (driver.Result, error)
 }
 
 var (
-	driverInstance = &mockDriver{}
-	driverOnce     sync.Once
+	statsDriverInstance = &statsMockDriver{}
+	statsDriverOnce     sync.Once
 )
 
 func init() {
-	driverOnce.Do(func() {
-		sql.Register("mock_pg_stats", driverInstance)
+	statsDriverOnce.Do(func() {
+		sql.Register("mock_pg_stats", statsDriverInstance)
 	})
 }
 
-func (d *mockDriver) Open(name string) (driver.Conn, error) {
-	return &mockConn{driver: d}, nil
+func (d *statsMockDriver) Open(name string) (driver.Conn, error) {
+	return &statsMockConn{driver: d}, nil
 }
 
-type mockConn struct {
-	driver *mockDriver
+type statsMockConn struct {
+	driver *statsMockDriver
 }
 
-func (c *mockConn) Prepare(query string) (driver.Stmt, error) {
-	return &mockStmt{conn: c, query: query}, nil
+func (c *statsMockConn) Prepare(query string) (driver.Stmt, error) {
+	return &statsMockStmt{conn: c, query: query}, nil
 }
-func (c *mockConn) Close() error { return nil }
-func (c *mockConn) Begin() (driver.Tx, error) {
-	return &mockTx{}, nil
+func (c *statsMockConn) Close() error { return nil }
+func (c *statsMockConn) Begin() (driver.Tx, error) {
+	return &statsMockTx{}, nil
 }
 
-type mockTx struct{}
+type statsMockTx struct{}
 
-func (t *mockTx) Commit() error   { return nil }
-func (t *mockTx) Rollback() error { return nil }
+func (t *statsMockTx) Commit() error   { return nil }
+func (t *statsMockTx) Rollback() error { return nil }
 
-type mockStmt struct {
-	conn  *mockConn
+type statsMockStmt struct {
+	conn  *statsMockConn
 	query string
 }
 
-func (s *mockStmt) Close() error  { return nil }
-func (s *mockStmt) NumInput() int { return -1 }
+func (s *statsMockStmt) Close() error  { return nil }
+func (s *statsMockStmt) NumInput() int { return -1 }
 
-func (s *mockStmt) Exec(args []driver.Value) (driver.Result, error) {
+func (s *statsMockStmt) Exec(args []driver.Value) (driver.Result, error) {
 	s.conn.driver.mu.Lock()
 	defer s.conn.driver.mu.Unlock()
 	if s.conn.driver.execHandler != nil {
 		return s.conn.driver.execHandler(s.query, args)
 	}
-	return mockResult{rowsAffected: 1}, nil
+	return statsMockResult{rowsAffected: 1}, nil
 }
 
-func (s *mockStmt) Query(args []driver.Value) (driver.Rows, error) {
+func (s *statsMockStmt) Query(args []driver.Value) (driver.Rows, error) {
 	s.conn.driver.mu.Lock()
 	defer s.conn.driver.mu.Unlock()
 	if s.conn.driver.queryHandler != nil {
 		return s.conn.driver.queryHandler(s.query, args)
 	}
-	return &mockRows{}, nil
+	return &statsMockRows{}, nil
 }
 
-type mockResult struct {
+type statsMockResult struct {
 	lastInsertID int64
 	rowsAffected int64
 }
 
-func (r mockResult) LastInsertId() (int64, error) { return r.lastInsertID, nil }
-func (r mockResult) RowsAffected() (int64, error) { return r.rowsAffected, nil }
+func (r statsMockResult) LastInsertId() (int64, error) { return r.lastInsertID, nil }
+func (r statsMockResult) RowsAffected() (int64, error) { return r.rowsAffected, nil }
 
-type mockRows struct {
+type statsMockRows struct {
 	cols []string
 	vals [][]driver.Value
 	idx  int
 }
 
-func (r *mockRows) Columns() []string { return r.cols }
-func (r *mockRows) Close() error      { return nil }
-func (r *mockRows) Next(dest []driver.Value) error {
+func (r *statsMockRows) Columns() []string { return r.cols }
+func (r *statsMockRows) Close() error      { return nil }
+func (r *statsMockRows) Next(dest []driver.Value) error {
 	if r.idx >= len(r.vals) {
 		return io.EOF
 	}
@@ -109,14 +109,14 @@ func (r *mockRows) Next(dest []driver.Value) error {
 	return nil
 }
 
-func setupMockDB(t *testing.T) (*sqlx.DB, *mockDriver) {
+func setupStatsMockDB(t *testing.T) (*sqlx.DB, *statsMockDriver) {
 	t.Helper()
 	db, err := sql.Open("mock_pg_stats", "test")
 	if err != nil {
 		t.Fatalf("failed to open mock db: %v", err)
 	}
 	sqlxDB := sqlx.NewDb(db, "postgres")
-	return sqlxDB, driverInstance
+	return sqlxDB, statsDriverInstance
 }
 
 func TestAccountDailyStatsStorage_Upsert(t *testing.T) {
@@ -218,7 +218,7 @@ func TestAccountDailyStatsStorage_GetDashboard(t *testing.T) {
 	}
 }
 
-func TestMigrationsSchemaIntegrity(t *testing.T) {
+func TestAccountDailyStatsMigrationsSchemaIntegrity(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)

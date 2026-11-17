@@ -19,14 +19,18 @@ func (h *Handler) alerts() *usecase.AlertUsecase {
 	if h.alertUsecase != nil {
 		return h.alertUsecase
 	}
-	return usecase.NewAlertUsecase(h.demoAlerts)
+	return usecase.NewAlertUsecase(h.demoAlerts, nil, nil)
 }
 
 func (h *Handler) ListAlerts(c *gin.Context) {
-	alerts, err := h.alerts().ListActiveByCompany(c.Request.Context(), alertCompanyID)
+	companyID, err := parseCompanyID(c)
 	if err != nil {
-		_ = c.Error(err)
-		c.JSON(500, gin.H{"error": "failed to list alerts"})
+		handleUsecaseError(c, err, "")
+		return
+	}
+	alerts, err := h.alerts().ListActiveByCompany(c.Request.Context(), companyID)
+	if err != nil {
+		handleUsecaseError(c, err, "")
 		return
 	}
 	c.JSON(200, alerts)
@@ -38,17 +42,14 @@ func (h *Handler) ResolveAlert(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "id must be a positive number"})
 		return
 	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
 
-	if err := h.alerts().Resolve(c.Request.Context(), alertCompanyID, id); err != nil {
-		switch {
-		case errors.Is(err, domain.ErrNotFound):
-			c.JSON(404, gin.H{"error": "alert not found"})
-		case errors.Is(err, domain.ErrValidation):
-			c.JSON(400, gin.H{"error": "invalid alert id"})
-		default:
-			_ = c.Error(err)
-			c.JSON(500, gin.H{"error": "failed to resolve alert"})
-		}
+	if err := h.alerts().Resolve(c.Request.Context(), companyID, id); err != nil {
+		handleUsecaseError(c, err, "alert not found")
 		return
 	}
 	c.JSON(200, gin.H{"status": "resolved"})

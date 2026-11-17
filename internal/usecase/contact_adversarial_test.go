@@ -95,7 +95,7 @@ func TestContactUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 
 		t.Run("GetByID with invalid id", func(t *testing.T) {
 			uc := usecase.NewContactUsecase(&mockContactRepo{})
-			_, err := uc.GetByID(ctx, badID)
+			_, err := uc.GetByID(ctx, 1, badID)
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for id %d, got: %v", badID, err)
 			}

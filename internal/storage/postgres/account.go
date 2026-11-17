@@ -20,6 +20,12 @@ func NewAccountStorage(db *sqlx.DB) *AccountStorage {
 }
 
 func (s *AccountStorage) Create(ctx context.Context, acc domain.Account) (int64, error) {
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	query := `
 		INSERT INTO accounts (company_id, employee_id, phone, username, telegram_user_id, status, session, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -28,10 +34,10 @@ func (s *AccountStorage) Create(ctx context.Context, acc domain.Account) (int64,
 	var id int64
 	createdAt := acc.CreatedAt
 	if createdAt.IsZero() {
-		createdAt = time.Now()
+		createdAt = time.Now().UTC()
 	}
 
-	err := s.db.QueryRowContext(ctx, query,
+	err = tx.QueryRowContext(ctx, query,
 		acc.CompanyID,
 		acc.EmployeeID,
 		acc.Phone,
@@ -51,9 +57,14 @@ func (s *AccountStorage) Create(ctx context.Context, acc domain.Account) (int64,
 			INSERT INTO account_assignments (account_id, employee_id, from_time)
 			VALUES ($1, $2, $3)
 		`
-		_, _ = s.db.ExecContext(ctx, assignQuery, id, acc.EmployeeID, createdAt)
+		if _, err := tx.ExecContext(ctx, assignQuery, id, acc.EmployeeID, createdAt); err != nil {
+			return 0, fmt.Errorf("insert initial assignment: %w", err)
+		}
 	}
 
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit tx: %w", err)
+	}
 	return id, nil
 }
 
@@ -81,13 +92,13 @@ func (s *AccountStorage) ListByCompany(ctx context.Context, companyID int64) ([]
 	query := `
 		SELECT a.id, a.company_id, a.employee_id, a.phone, a.username,
 		       COALESCE(e.name, '') AS employee_name,
-		       a.telegram_user_id, a.status, a.session, a.last_activity_at, a.created_at
+		       a.telegram_user_id, a.status, NULL::bytea AS session, a.last_activity_at, a.created_at
 		FROM accounts a
 		LEFT JOIN employees e ON a.employee_id = e.id
 		WHERE a.company_id = $1
 		ORDER BY a.id ASC
 	`
-	var accounts []domain.Account
+	accounts := make([]domain.Account, 0)
 	err := s.db.SelectContext(ctx, &accounts, query, companyID)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts by company: %w", err)
@@ -99,13 +110,13 @@ func (s *AccountStorage) ListByEmployee(ctx context.Context, employeeID int64) (
 	query := `
 		SELECT a.id, a.company_id, a.employee_id, a.phone, a.username,
 		       COALESCE(e.name, '') AS employee_name,
-		       a.telegram_user_id, a.status, a.session, a.last_activity_at, a.created_at
+		       a.telegram_user_id, a.status, NULL::bytea AS session, a.last_activity_at, a.created_at
 		FROM accounts a
 		LEFT JOIN employees e ON a.employee_id = e.id
 		WHERE a.employee_id = $1
 		ORDER BY a.id ASC
 	`
-	var accounts []domain.Account
+	accounts := make([]domain.Account, 0)
 	err := s.db.SelectContext(ctx, &accounts, query, employeeID)
 	if err != nil {
 		return nil, fmt.Errorf("list accounts by employee: %w", err)
@@ -130,15 +141,30 @@ func (s *AccountStorage) UpdateStatus(ctx context.Context, id int64, status doma
 }
 
 func (s *AccountStorage) AssignEmployee(ctx context.Context, accountID, employeeID int64) error {
-	now := time.Now()
+	tx, err := s.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+
+	// Проверяем существование аккаунта
+	var exists bool
+	if err := tx.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM accounts WHERE id = $1)`, accountID); err != nil {
+		return fmt.Errorf("check account exists: %w", err)
+	}
+	if !exists {
+		return domain.ErrNotFound
+	}
+
 	// Закрываем предыдущее активное назначение
 	closeQuery := `
 		UPDATE account_assignments
 		SET to_time = $1
 		WHERE account_id = $2 AND to_time IS NULL
 	`
-	_, err := s.db.ExecContext(ctx, closeQuery, now, accountID)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, closeQuery, now, accountID); err != nil {
 		return fmt.Errorf("close previous assignment: %w", err)
 	}
 
@@ -147,17 +173,18 @@ func (s *AccountStorage) AssignEmployee(ctx context.Context, accountID, employee
 		INSERT INTO account_assignments (account_id, employee_id, from_time)
 		VALUES ($1, $2, $3)
 	`
-	_, err = s.db.ExecContext(ctx, insertQuery, accountID, employeeID, now)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, insertQuery, accountID, employeeID, now); err != nil {
 		return fmt.Errorf("insert new assignment: %w", err)
 	}
 
 	// Обновляем текущего ответственного в таблице accounts
 	updateAccQuery := `UPDATE accounts SET employee_id = $1 WHERE id = $2`
-	_, err = s.db.ExecContext(ctx, updateAccQuery, employeeID, accountID)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, updateAccQuery, employeeID, accountID); err != nil {
 		return fmt.Errorf("update account employee_id: %w", err)
 	}
 
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
 	return nil
 }

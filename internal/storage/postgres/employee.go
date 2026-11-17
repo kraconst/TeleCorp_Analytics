@@ -61,7 +61,7 @@ func (s *EmployeeStorage) ListByCompany(ctx context.Context, companyID int64) ([
 		WHERE company_id = $1
 		ORDER BY id ASC
 	`
-	var employees []domain.Employee
+	employees := make([]domain.Employee, 0)
 	err := s.db.SelectContext(ctx, &employees, query, companyID)
 	if err != nil {
 		return nil, fmt.Errorf("list employees by company: %w", err)

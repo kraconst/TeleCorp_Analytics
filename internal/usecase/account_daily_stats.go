@@ -9,11 +9,15 @@ import (
 )
 
 type AccountDailyStatsUsecase struct {
-	repo AccountDailyStatsRepository
+	repo     AccountDailyStatsRepository
+	accounts AccountRepository
 }
 
-func NewAccountDailyStatsUsecase(repo AccountDailyStatsRepository) *AccountDailyStatsUsecase {
-	return &AccountDailyStatsUsecase{repo: repo}
+func NewAccountDailyStatsUsecase(repo AccountDailyStatsRepository, accounts AccountRepository) *AccountDailyStatsUsecase {
+	return &AccountDailyStatsUsecase{
+		repo:     repo,
+		accounts: accounts,
+	}
 }
 
 func (u *AccountDailyStatsUsecase) Upsert(ctx context.Context, stats domain.AccountDailyStats) error {
@@ -25,6 +29,11 @@ func (u *AccountDailyStatsUsecase) Upsert(ctx context.Context, stats domain.Acco
 	}
 	if stats.MessagesIn < 0 || stats.MessagesOut < 0 || stats.ActiveChats < 0 || stats.NewContacts < 0 || stats.AvgResponseTime < 0 {
 		return fmt.Errorf("%w: metric values cannot be negative", domain.ErrValidation)
+	}
+	if u.accounts != nil {
+		if _, err := u.accounts.GetByID(ctx, stats.AccountID); err != nil {
+			return err
+		}
 	}
 	return u.repo.Upsert(ctx, stats)
 }
@@ -39,10 +48,18 @@ func (u *AccountDailyStatsUsecase) IncrementCounters(ctx context.Context, accoun
 	if messagesIn < 0 || messagesOut < 0 || newContacts < 0 {
 		return fmt.Errorf("%w: increment values cannot be negative", domain.ErrValidation)
 	}
+	if u.accounts != nil {
+		if _, err := u.accounts.GetByID(ctx, accountID); err != nil {
+			return err
+		}
+	}
 	return u.repo.IncrementCounters(ctx, accountID, day, messagesIn, messagesOut, newContacts)
 }
 
-func (u *AccountDailyStatsUsecase) GetByAccountAndDateRange(ctx context.Context, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
+func (u *AccountDailyStatsUsecase) GetByAccountAndDateRange(ctx context.Context, companyID, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
+	if companyID <= 0 {
+		return nil, fmt.Errorf("%w: company_id must be a positive number", domain.ErrValidation)
+	}
 	if accountID <= 0 {
 		return nil, fmt.Errorf("%w: account_id must be a positive number", domain.ErrValidation)
 	}
@@ -53,7 +70,16 @@ func (u *AccountDailyStatsUsecase) GetByAccountAndDateRange(ctx context.Context,
 	if from.After(to) {
 		return nil, fmt.Errorf("%w: 'from' date must be before or equal to 'to' date", domain.ErrValidation)
 	}
-	return u.repo.GetByAccountAndDateRange(ctx, accountID, from, to)
+	if u.accounts != nil {
+		acc, err := u.accounts.GetByID(ctx, accountID)
+		if err != nil {
+			return nil, err
+		}
+		if acc.CompanyID != companyID {
+			return nil, fmt.Errorf("%w: account not found", domain.ErrNotFound)
+		}
+	}
+	return u.repo.GetByAccountAndDateRange(ctx, companyID, accountID, from, to)
 }
 
 func (u *AccountDailyStatsUsecase) GetByCompanyAndDateRange(ctx context.Context, companyID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {

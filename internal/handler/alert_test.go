@@ -19,7 +19,7 @@ import (
 
 func alertTestRouter(u *usecase.AlertUsecase) *gin.Engine {
 	gin.SetMode(gin.TestMode)
-	h := handler.New(nil, nil, nil, u)
+	h := handler.New(nil, nil, nil, nil, nil, nil, u, nil, nil, nil)
 	r := gin.New()
 	r.GET("/alerts", h.ListAlerts)
 	r.POST("/alerts/:id/resolve", h.ResolveAlert)
@@ -111,7 +111,7 @@ func TestAlertHTTPUsesCompanyScopeAndMapsErrors(t *testing.T) {
 				return storageErr
 			}
 		},
-	})
+	}, nil, nil)
 	r := alertTestRouter(u)
 	for _, tc := range []struct {
 		method string
@@ -134,7 +134,7 @@ func TestAlertHTTPReturnsRepositoryDataAndEmptyArray(t *testing.T) {
 	for _, alerts := range [][]domain.Alert{nil, {{ID: 42, CompanyID: 1, ChatID: 7, Type: domain.AlertTypeUrgent}}} {
 		u := usecase.NewAlertUsecase(alertHandlerRepoStub{list: func(context.Context, int64) ([]domain.Alert, error) {
 			return alerts, nil
-		}})
+		}}, nil, nil)
 		w := alertRequest(alertTestRouter(u), http.MethodGet, "/alerts")
 		var got []domain.Alert
 		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || w.Code != http.StatusOK || got == nil || len(got) != len(alerts) {

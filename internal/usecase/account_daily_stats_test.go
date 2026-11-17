@@ -13,7 +13,7 @@ import (
 type mockAccountDailyStatsRepo struct {
 	upsertFunc                   func(ctx context.Context, stats domain.AccountDailyStats) error
 	incrementCountersFunc        func(ctx context.Context, accountID int64, day time.Time, messagesIn, messagesOut, newContacts int) error
-	getByAccountAndDateRangeFunc func(ctx context.Context, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error)
+	getByAccountAndDateRangeFunc func(ctx context.Context, companyID, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error)
 	getByCompanyAndDateRangeFunc func(ctx context.Context, companyID int64, from, to time.Time) ([]domain.AccountDailyStats, error)
 	getDashboardFunc             func(ctx context.Context, companyID int64, from, to time.Time) (*domain.DashboardStats, error)
 	getAccountRatingsFunc        func(ctx context.Context, companyID int64, from, to time.Time) ([]domain.AccountRating, error)
@@ -33,9 +33,9 @@ func (m *mockAccountDailyStatsRepo) IncrementCounters(ctx context.Context, accou
 	return nil
 }
 
-func (m *mockAccountDailyStatsRepo) GetByAccountAndDateRange(ctx context.Context, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
+func (m *mockAccountDailyStatsRepo) GetByAccountAndDateRange(ctx context.Context, companyID, accountID int64, from, to time.Time) ([]domain.AccountDailyStats, error) {
 	if m.getByAccountAndDateRangeFunc != nil {
-		return m.getByAccountAndDateRangeFunc(ctx, accountID, from, to)
+		return m.getByAccountAndDateRangeFunc(ctx, companyID, accountID, from, to)
 	}
 	return nil, nil
 }
@@ -75,7 +75,7 @@ func TestAccountDailyStatsUsecase_Upsert(t *testing.T) {
 				return nil
 			},
 		}
-		uc := usecase.NewAccountDailyStatsUsecase(repo)
+		uc := usecase.NewAccountDailyStatsUsecase(repo, nil)
 
 		err := uc.Upsert(ctx, domain.AccountDailyStats{
 			AccountID:       1,
@@ -95,7 +95,7 @@ func TestAccountDailyStatsUsecase_Upsert(t *testing.T) {
 	})
 
 	t.Run("invalid account_id", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		err := uc.Upsert(ctx, domain.AccountDailyStats{
 			AccountID: 0,
 			Day:       time.Now(),
@@ -106,7 +106,7 @@ func TestAccountDailyStatsUsecase_Upsert(t *testing.T) {
 	})
 
 	t.Run("zero day", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		err := uc.Upsert(ctx, domain.AccountDailyStats{
 			AccountID: 1,
 		})
@@ -116,7 +116,7 @@ func TestAccountDailyStatsUsecase_Upsert(t *testing.T) {
 	})
 
 	t.Run("negative metric values", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		err := uc.Upsert(ctx, domain.AccountDailyStats{
 			AccountID:  1,
 			Day:        time.Now(),
@@ -142,7 +142,7 @@ func TestAccountDailyStatsUsecase_IncrementCounters(t *testing.T) {
 				return nil
 			},
 		}
-		uc := usecase.NewAccountDailyStatsUsecase(repo)
+		uc := usecase.NewAccountDailyStatsUsecase(repo, nil)
 
 		err := uc.IncrementCounters(ctx, 2, time.Now(), 5, 3, 1)
 		if err != nil {
@@ -154,7 +154,7 @@ func TestAccountDailyStatsUsecase_IncrementCounters(t *testing.T) {
 	})
 
 	t.Run("invalid account_id", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		err := uc.IncrementCounters(ctx, -1, time.Now(), 1, 0, 0)
 		if !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("expected ErrValidation, got %v", err)
@@ -162,7 +162,7 @@ func TestAccountDailyStatsUsecase_IncrementCounters(t *testing.T) {
 	})
 
 	t.Run("zero day", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		err := uc.IncrementCounters(ctx, 1, time.Time{}, 1, 0, 0)
 		if !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("expected ErrValidation, got %v", err)
@@ -170,7 +170,7 @@ func TestAccountDailyStatsUsecase_IncrementCounters(t *testing.T) {
 	})
 
 	t.Run("negative increments", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		err := uc.IncrementCounters(ctx, 1, time.Now(), -1, 0, 0)
 		if !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("expected ErrValidation, got %v", err)
@@ -196,7 +196,7 @@ func TestAccountDailyStatsUsecase_GetDashboard(t *testing.T) {
 				}, nil
 			},
 		}
-		uc := usecase.NewAccountDailyStatsUsecase(repo)
+		uc := usecase.NewAccountDailyStatsUsecase(repo, nil)
 
 		res, err := uc.GetDashboard(ctx, 1, from, to)
 		if err != nil {
@@ -208,7 +208,7 @@ func TestAccountDailyStatsUsecase_GetDashboard(t *testing.T) {
 	})
 
 	t.Run("invalid company_id", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		_, err := uc.GetDashboard(ctx, 0, time.Time{}, time.Time{})
 		if !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("expected ErrValidation, got %v", err)
@@ -219,7 +219,7 @@ func TestAccountDailyStatsUsecase_GetDashboard(t *testing.T) {
 		from := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 		to := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		_, err := uc.GetDashboard(ctx, 1, from, to)
 		if !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("expected ErrValidation, got %v", err)
@@ -242,7 +242,7 @@ func TestAccountDailyStatsUsecase_GetAccountRatings(t *testing.T) {
 				}, nil
 			},
 		}
-		uc := usecase.NewAccountDailyStatsUsecase(repo)
+		uc := usecase.NewAccountDailyStatsUsecase(repo, nil)
 
 		ratings, err := uc.GetAccountRatings(ctx, 1, time.Time{}, time.Time{})
 		if err != nil {
@@ -254,7 +254,7 @@ func TestAccountDailyStatsUsecase_GetAccountRatings(t *testing.T) {
 	})
 
 	t.Run("invalid company_id", func(t *testing.T) {
-		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{})
+		uc := usecase.NewAccountDailyStatsUsecase(&mockAccountDailyStatsRepo{}, nil)
 		_, err := uc.GetAccountRatings(ctx, -5, time.Time{}, time.Time{})
 		if !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("expected ErrValidation, got %v", err)

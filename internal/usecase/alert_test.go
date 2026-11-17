@@ -42,7 +42,7 @@ func TestAlertCreateRejectsInvalidInput(t *testing.T) {
 	u := usecase.NewAlertUsecase(alertRepoStub{create: func(context.Context, domain.Alert) (int64, error) {
 		t.Fatal("invalid alerts must not reach storage")
 		return 0, nil
-	}})
+	}}, nil, nil)
 	for _, alert := range tests {
 		if _, err := u.Create(context.Background(), alert); !errors.Is(err, domain.ErrValidation) {
 			t.Errorf("Create(%+v): expected validation error, got %v", alert, err)
@@ -64,7 +64,7 @@ func TestAlertCreateAcceptsSupportedTypesAndSetsTimestamp(t *testing.T) {
 					t.Fatalf("expected current UTC timestamp, got %v", a.CreatedAt)
 				}
 				return 42, nil
-			}})
+			}}, nil, nil)
 			id, err := u.Create(ctx, domain.Alert{CompanyID: 7, ChatID: 12, Type: kind})
 			if err != nil || id != 42 {
 				t.Fatalf("expected ID 42, got %d, %v", id, err)
@@ -81,7 +81,7 @@ func TestAlertCreatePreservesEventTimeAndRepositoryError(t *testing.T) {
 			t.Fatalf("event time was changed: %v", a.CreatedAt)
 		}
 		return 0, wantErr
-	}})
+	}}, nil, nil)
 	_, err := u.Create(context.Background(), domain.Alert{
 		CompanyID: 1, ChatID: 2, Type: domain.AlertTypeNoReply, CreatedAt: eventTime,
 	})
@@ -96,7 +96,7 @@ func TestAlertListValidatesCompanyAndNormalizesEmptyResult(t *testing.T) {
 			t.Fatalf("expected company 7, got %d", companyID)
 		}
 		return nil, nil
-	}})
+	}}, nil, nil)
 	for _, companyID := range []int64{0, -1} {
 		if _, err := u.ListActiveByCompany(context.Background(), companyID); !errors.Is(err, domain.ErrValidation) {
 			t.Fatalf("expected validation error, got %v", err)
@@ -112,7 +112,7 @@ func TestAlertListPropagatesRepositoryError(t *testing.T) {
 	wantErr := context.Canceled
 	u := usecase.NewAlertUsecase(alertRepoStub{list: func(context.Context, int64) ([]domain.Alert, error) {
 		return nil, wantErr
-	}})
+	}}, nil, nil)
 	if _, err := u.ListActiveByCompany(context.Background(), 1); !errors.Is(err, wantErr) {
 		t.Fatalf("expected wrapped repository error, got %v", err)
 	}
@@ -124,7 +124,7 @@ func TestAlertResolveValidatesIDsAndPreservesCompanyScope(t *testing.T) {
 			t.Fatalf("unexpected company/alert IDs: %d/%d", companyID, id)
 		}
 		return domain.ErrNotFound
-	}})
+	}}, nil, nil)
 	for _, ids := range [][2]int64{{0, 1}, {-1, 1}, {1, 0}, {1, -1}} {
 		if err := u.Resolve(context.Background(), ids[0], ids[1]); !errors.Is(err, domain.ErrValidation) {
 			t.Fatalf("expected validation error for %v, got %v", ids, err)
