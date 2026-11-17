@@ -51,7 +51,7 @@ func (s *MessageStorage) ListByChat(ctx context.Context, companyID, chatID int64
 		JOIN chats c ON c.id = m.chat_id
 		JOIN accounts a ON a.id = c.account_id
 		WHERE m.chat_id = $1 AND a.company_id = $2
-		ORDER BY m.sent_at ASC
+		ORDER BY m.sent_at ASC, m.id ASC
 		LIMIT $3 OFFSET $4
 	`
 	messages := make([]domain.Message, 0)

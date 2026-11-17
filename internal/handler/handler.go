@@ -235,6 +235,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 
 	// Messages
 	r.GET("/chats/:id/messages", h.ListMessagesByChat)
+	r.GET("/chats/:id/analytics", h.GetChatAnalytics)
 
 	// Analytics
 	r.GET("/analytics/dashboard", h.GetDashboard)
