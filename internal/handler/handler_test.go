@@ -549,3 +549,65 @@ func TestChatCompositeDetails_Handler(t *testing.T) {
 		t.Errorf("expected summary topic 'Enterprise Contract', got %+v", details.Summary)
 	}
 }
+
+func TestHandler_AssignEmployee(t *testing.T) {
+	t.Run("mock mode success", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 2}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/1/assign", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("invalid account id", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 2}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/abc/assign", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("invalid employee id", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 0}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/1/assign", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("account not found in mock mode", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 2}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/999/assign", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", w.Code)
+		}
+	})
+}

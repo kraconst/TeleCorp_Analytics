@@ -26,7 +26,7 @@ func (s *AlertStorage) Create(ctx context.Context, alert domain.Alert) (int64, e
 	if err := s.db.QueryRowContext(ctx, query,
 		alert.CompanyID, alert.ChatID, alert.Type, alert.CreatedAt,
 	).Scan(&id); err != nil {
-		return 0, fmt.Errorf("insert alert: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert alert: %w", err))
 	}
 	return id, nil
 }
@@ -53,7 +53,7 @@ func (s *AlertStorage) Resolve(ctx context.Context, companyID, id int64) error {
 	`
 	res, err := s.db.ExecContext(ctx, query, companyID, id)
 	if err != nil {
-		return fmt.Errorf("resolve alert: %w", err)
+		return mapPgError(fmt.Errorf("resolve alert: %w", err))
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {

@@ -56,11 +56,11 @@ func (u *MessageUsecase) ListByChat(ctx context.Context, companyID, chatID int64
 	if chatID <= 0 {
 		return nil, fmt.Errorf("%w: invalid chat_id", domain.ErrValidation)
 	}
-	if limit <= 0 || limit > 200 {
-		limit = 50
+	if limit <= 0 || limit > 100 {
+		return nil, fmt.Errorf("%w: limit must be between 1 and 100", domain.ErrValidation)
 	}
 	if offset < 0 {
-		offset = 0
+		return nil, fmt.Errorf("%w: offset must be non-negative", domain.ErrValidation)
 	}
 
 	if u.chats != nil {

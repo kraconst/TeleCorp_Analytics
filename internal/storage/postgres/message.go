@@ -39,7 +39,7 @@ func (s *MessageStorage) Create(ctx context.Context, msg domain.Message) (int64,
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("insert message: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert message: %w", err))
 	}
 	return id, nil
 }

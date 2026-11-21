@@ -52,7 +52,7 @@ func (s *ChatSummaryStorage) Upsert(ctx context.Context, summary domain.ChatSumm
 		genAt,
 	)
 	if err != nil {
-		return fmt.Errorf("upsert chat summary: %w", err)
+		return mapPgError(fmt.Errorf("upsert chat summary: %w", err))
 	}
 	return nil
 }

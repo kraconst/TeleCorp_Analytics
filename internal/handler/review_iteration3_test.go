@@ -154,3 +154,43 @@ func TestMinor2_ConcurrentMockAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestMinor_ListMessagesByChat_LimitValidation(t *testing.T) {
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	r := h.InitRoutes()
+
+	for _, limitStr := range []string{"500", "0", "-5", "101"} {
+		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("/chats/1/messages?company_id=1&limit=%s", limitStr), nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for limit=%s, got %d, body: %s", limitStr, w.Code, w.Body.String())
+		}
+	}
+
+	// Valid limit between 1 and 100 should return 200 OK
+	for _, limitStr := range []string{"1", "50", "100"} {
+		req, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("/chats/1/messages?company_id=1&limit=%s", limitStr), nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for limit=%s, got %d, body: %s", limitStr, w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestDeactivateEmployee_MockNotFound(t *testing.T) {
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	r := h.InitRoutes()
+
+	// Non-existent employee in mock mode must return 404
+	req, _ := http.NewRequest(http.MethodDelete, "/employees/99999?company_id=1", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found for non-existent employee, got %d, body: %s", w.Code, w.Body.String())
+	}
+}

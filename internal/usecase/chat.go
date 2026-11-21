@@ -130,7 +130,7 @@ func (u *ChatUsecase) GetDetails(ctx context.Context, companyID, id int64) (*Cha
 		if err != nil && !errors.Is(err, domain.ErrNotFound) {
 			return nil, fmt.Errorf("get contact for chat details: %w", err)
 		}
-		if err == nil {
+		if err == nil && contact.CompanyID == companyID {
 			details.Contact = contact
 		}
 	}
@@ -159,11 +159,11 @@ func (u *ChatUsecase) Create(ctx context.Context, chat domain.Chat) (*domain.Cha
 	if u.accounts != nil && u.contacts != nil {
 		acc, err := u.accounts.GetByID(ctx, chat.AccountID)
 		if err != nil {
-			return nil, fmt.Errorf("%w: account not found", domain.ErrNotFound)
+			return nil, err
 		}
 		contact, err := u.contacts.GetByID(ctx, chat.ContactID)
 		if err != nil {
-			return nil, fmt.Errorf("%w: contact not found", domain.ErrNotFound)
+			return nil, err
 		}
 		if acc.CompanyID != contact.CompanyID {
 			return nil, fmt.Errorf("%w: account and contact belong to different companies", domain.ErrForbidden)
@@ -199,8 +199,7 @@ func (u *ChatUsecase) Create(ctx context.Context, chat domain.Chat) (*domain.Cha
 
 	created, err := u.chats.GetByID(ctx, id)
 	if err != nil {
-		chat.ID = id
-		return &chat, nil
+		return nil, fmt.Errorf("get created chat: %w", err)
 	}
 	return created, nil
 }

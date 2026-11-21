@@ -50,6 +50,9 @@ func (u *UserUsecase) Create(ctx context.Context, user domain.User) (int64, erro
 			if emp.CompanyID != user.CompanyID {
 				return 0, fmt.Errorf("%w: employee belongs to a different company", domain.ErrForbidden)
 			}
+			if !emp.IsActive {
+				return 0, fmt.Errorf("%w: employee is inactive", domain.ErrValidation)
+			}
 		}
 	}
 

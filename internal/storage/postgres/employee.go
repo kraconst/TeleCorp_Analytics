@@ -32,7 +32,7 @@ func (s *EmployeeStorage) Create(ctx context.Context, emp domain.Employee) (int6
 		emp.IsActive,
 	).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("insert employee: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert employee: %w", err))
 	}
 	return id, nil
 }
@@ -77,7 +77,7 @@ func (s *EmployeeStorage) Update(ctx context.Context, emp domain.Employee) error
 	`
 	res, err := s.db.ExecContext(ctx, query, emp.Name, emp.Position, emp.ID, emp.CompanyID)
 	if err != nil {
-		return fmt.Errorf("update employee: %w", err)
+		return mapPgError(fmt.Errorf("update employee: %w", err))
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {
@@ -93,7 +93,7 @@ func (s *EmployeeStorage) Deactivate(ctx context.Context, id int64) error {
 	query := `UPDATE employees SET is_active = FALSE WHERE id = $1`
 	res, err := s.db.ExecContext(ctx, query, id)
 	if err != nil {
-		return fmt.Errorf("deactivate employee: %w", err)
+		return mapPgError(fmt.Errorf("deactivate employee: %w", err))
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {

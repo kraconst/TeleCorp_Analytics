@@ -48,6 +48,9 @@ func (u *AccountUsecase) Create(ctx context.Context, input CreateAccountInput) (
 		if emp.CompanyID != input.CompanyID {
 			return nil, fmt.Errorf("%w: employee belongs to a different company", domain.ErrForbidden)
 		}
+		if !emp.IsActive {
+			return nil, fmt.Errorf("%w: employee is inactive", domain.ErrValidation)
+		}
 		empName = emp.Name
 	}
 
@@ -67,8 +70,7 @@ func (u *AccountUsecase) Create(ctx context.Context, input CreateAccountInput) (
 
 	created, err := u.accounts.GetByID(ctx, id)
 	if err != nil {
-		acc.ID = id
-		return &acc, nil
+		return nil, fmt.Errorf("get created account: %w", err)
 	}
 
 	return created, nil
@@ -121,6 +123,9 @@ func (u *AccountUsecase) AssignEmployee(ctx context.Context, companyID, accountI
 		}
 		if emp.CompanyID != companyID {
 			return fmt.Errorf("%w: employee belongs to a different company", domain.ErrForbidden)
+		}
+		if !emp.IsActive {
+			return fmt.Errorf("%w: employee is inactive", domain.ErrValidation)
 		}
 	}
 

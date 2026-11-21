@@ -39,8 +39,7 @@ func (u *ContactUsecase) Create(ctx context.Context, c domain.Contact) (*domain.
 
 	created, err := u.contacts.GetByID(ctx, id)
 	if err != nil {
-		c.ID = id
-		return &c, nil
+		return nil, fmt.Errorf("get created contact: %w", err)
 	}
 	return created, nil
 }

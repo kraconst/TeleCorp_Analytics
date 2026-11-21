@@ -155,6 +155,9 @@ func TestContactUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 				}
 				return 1, nil
 			},
+			getByIDFn: func(ctx context.Context, id int64) (*domain.Contact, error) {
+				return &domain.Contact{ID: id, CompanyID: 1, TelegramUserID: 1, Name: largeName, Username: largeUsername}, nil
+			},
 		}
 
 		uc := usecase.NewContactUsecase(repo)

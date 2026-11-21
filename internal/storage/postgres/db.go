@@ -57,9 +57,6 @@ func RunMigrations(db *sqlx.DB, migrationsDir string) error {
 
 	entries, err := os.ReadDir(migrationsDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
 		return fmt.Errorf("read migrations directory: %w", err)
 	}
 
@@ -102,12 +99,12 @@ func RunMigrations(db *sqlx.DB, migrationsDir string) error {
 			return fmt.Errorf("begin tx for migration %s: %w", file, err)
 		}
 
-		if _, err := tx.Exec(string(content)); err != nil {
+		if _, err := tx.ExecContext(ctx, string(content)); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("execute migration %s: %w", file, err)
 		}
 
-		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", file); err != nil {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", file); err != nil {
 			_ = tx.Rollback()
 			return fmt.Errorf("record migration %s: %w", file, err)
 		}

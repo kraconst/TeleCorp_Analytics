@@ -41,7 +41,7 @@ func (s *AccountDailyStatsStorage) Upsert(ctx context.Context, stats domain.Acco
 		int64(stats.AvgResponseTime),
 	)
 	if err != nil {
-		return fmt.Errorf("upsert account daily stats: %w", err)
+		return mapPgError(fmt.Errorf("upsert account daily stats: %w", err))
 	}
 	return nil
 }
@@ -64,7 +64,7 @@ func (s *AccountDailyStatsStorage) IncrementCounters(ctx context.Context, accoun
 		newContacts,
 	)
 	if err != nil {
-		return fmt.Errorf("increment account daily stats counters: %w", err)
+		return mapPgError(fmt.Errorf("increment account daily stats counters: %w", err))
 	}
 	return nil
 }
@@ -127,7 +127,10 @@ func (s *AccountDailyStatsStorage) GetDashboard(ctx context.Context, companyID i
 				SELECT COUNT(*)
 				FROM chats c
 				JOIN accounts acc ON acc.id = c.account_id
-				WHERE acc.company_id = $1 AND c.awaiting_reply_since IS NOT NULL
+				JOIN companies comp ON comp.id = acc.company_id
+				WHERE acc.company_id = $1
+				  AND c.awaiting_reply_since IS NOT NULL
+				  AND NOW() - c.awaiting_reply_since > (comp.no_reply_threshold / 1000000000.0) * INTERVAL '1 second'
 			) AS unanswered_chats
 		FROM account_daily_stats s
 		JOIN accounts a ON a.id = s.account_id

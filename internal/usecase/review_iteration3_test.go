@@ -88,7 +88,7 @@ func (m *mockEmployeeRepoStub) GetByID(ctx context.Context, id int64) (*domain.E
 	if m.getByID != nil {
 		return m.getByID(ctx, id)
 	}
-	return &domain.Employee{ID: id, CompanyID: 1}, nil
+	return &domain.Employee{ID: id, CompanyID: 1, IsActive: true}, nil
 }
 func (m *mockEmployeeRepoStub) ListByCompany(ctx context.Context, companyID int64) ([]domain.Employee, error) {
 	return nil, nil
@@ -188,6 +188,18 @@ func TestMessageUsecase_ListByChat_NotFound(t *testing.T) {
 	if err != nil || msgs == nil {
 		t.Fatalf("expected success, got err=%v", err)
 	}
+
+	// Limit validation
+	for _, l := range []int{0, -1, 101, 500} {
+		_, err := uc.ListByChat(ctx, 1, 10, l, 0)
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation for limit=%d, got %v", l, err)
+		}
+	}
+	// Offset validation
+	if _, err := uc.ListByChat(ctx, 1, 10, 50, -1); !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected ErrValidation for negative offset, got %v", err)
+	}
 }
 
 // 3. Medium 2: UserUsecase validation (Role, EmployeeID check) & CompanyUsecase timezone validation
@@ -196,10 +208,13 @@ func TestUserUsecase_Validation(t *testing.T) {
 	empRepo := &mockEmployeeRepoStub{
 		getByID: func(ctx context.Context, id int64) (*domain.Employee, error) {
 			if id == 1 {
-				return &domain.Employee{ID: 1, CompanyID: 1}, nil
+				return &domain.Employee{ID: 1, CompanyID: 1, IsActive: true}, nil
 			}
 			if id == 2 {
-				return &domain.Employee{ID: 2, CompanyID: 2}, nil
+				return &domain.Employee{ID: 2, CompanyID: 2, IsActive: true}, nil
+			}
+			if id == 3 {
+				return &domain.Employee{ID: 3, CompanyID: 1, IsActive: false}, nil
 			}
 			return nil, domain.ErrNotFound
 		},
@@ -229,6 +244,19 @@ func TestUserUsecase_Validation(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for non-existent employee, got %v", err)
+	}
+
+	// Inactive employee cannot be linked
+	empInactive := int64(3)
+	_, err = uc.Create(ctx, domain.User{
+		CompanyID:    1,
+		Email:        "inactive@example.com",
+		PasswordHash: "secret",
+		Role:         domain.RoleManager,
+		EmployeeID:   &empInactive,
+	})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected ErrValidation for inactive employee, got %v", err)
 	}
 
 	// Employee lookup database error must be returned directly, not masked as ErrNotFound
@@ -317,16 +345,38 @@ func TestAccountUsecase_AssignEmployee_CompanyIsolation(t *testing.T) {
 	empRepo := &mockEmployeeRepoStub{
 		getByID: func(ctx context.Context, id int64) (*domain.Employee, error) {
 			if id == 1 {
-				return &domain.Employee{ID: 1, CompanyID: 1}, nil
+				return &domain.Employee{ID: 1, CompanyID: 1, IsActive: true}, nil
 			}
-			return &domain.Employee{ID: id, CompanyID: 2}, nil
+			if id == 2 {
+				return &domain.Employee{ID: 2, CompanyID: 2, IsActive: true}, nil
+			}
+			if id == 3 {
+				return &domain.Employee{ID: 3, CompanyID: 1, IsActive: false}, nil
+			}
+			return &domain.Employee{ID: id, CompanyID: 2, IsActive: true}, nil
 		},
 	}
 
 	uc := usecase.NewAccountUsecase(accountRepo, empRepo)
 
+	// Inactive employee cannot be assigned
+	err := uc.AssignEmployee(ctx, 1, 1, 3)
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected ErrValidation for assigning inactive employee, got %v", err)
+	}
+
+	// Inactive employee cannot be used in Create
+	_, err = uc.Create(ctx, usecase.CreateAccountInput{
+		CompanyID:  1,
+		EmployeeID: 3,
+		Phone:      "+79991112233",
+	})
+	if !errors.Is(err, domain.ErrValidation) {
+		t.Fatalf("expected ErrValidation for creating account with inactive employee, got %v", err)
+	}
+
 	// Caller company 1 cannot assign account 2 (which belongs to company 2)
-	err := uc.AssignEmployee(ctx, 1, 2, 2)
+	err = uc.AssignEmployee(ctx, 1, 2, 2)
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound for account belonging to other company, got %v", err)
 	}

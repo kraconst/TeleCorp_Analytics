@@ -314,7 +314,7 @@ func TestChatUsecase_Create(t *testing.T) {
 		}
 		contactRepo := &mockContactRepoForChat{
 			getByIDFn: func(ctx context.Context, id int64) (*domain.Contact, error) {
-				return &domain.Contact{ID: 20, Name: "Test Contact"}, nil
+				return &domain.Contact{ID: 20, CompanyID: 1, Name: "Test Contact"}, nil
 			},
 		}
 		summaryRepo := &mockSummaryRepoForChat{
@@ -329,6 +329,27 @@ func TestChatUsecase_Create(t *testing.T) {
 		}
 		if details.ID != 10 || details.Contact == nil || details.Contact.Name != "Test Contact" || details.Summary == nil || details.Summary.Topic != "AI Discussion" {
 			t.Fatalf("unexpected details: %+v", details)
+		}
+	})
+
+	t.Run("GetDetails ignores contact if company_id does not match", func(t *testing.T) {
+		repo := &mockChatRepo{
+			getByIDFn: func(ctx context.Context, id int64) (*domain.Chat, error) {
+				return &domain.Chat{ID: 10, ContactID: 20}, nil
+			},
+		}
+		contactRepo := &mockContactRepoForChat{
+			getByIDFn: func(ctx context.Context, id int64) (*domain.Contact, error) {
+				return &domain.Contact{ID: 20, CompanyID: 999, Name: "Other Company Contact"}, nil
+			},
+		}
+		uc := usecase.NewChatUsecase(repo, contactRepo, nil, nil)
+		details, err := uc.GetDetails(ctx, 1, 10)
+		if err != nil {
+			t.Fatalf("GetDetails failed: %v", err)
+		}
+		if details.Contact != nil {
+			t.Fatalf("expected details.Contact to be nil for mismatched company, got %+v", details.Contact)
 		}
 	})
 }

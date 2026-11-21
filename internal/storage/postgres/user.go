@@ -53,7 +53,7 @@ func (s *UserStorage) Create(ctx context.Context, u domain.User) (int64, error) 
 		if strings.Contains(err.Error(), "users_email_key") || strings.Contains(err.Error(), "23505") {
 			return 0, fmt.Errorf("%w: user with email %s already exists", domain.ErrConflict, u.Email)
 		}
-		return 0, fmt.Errorf("insert user: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert user: %w", err))
 	}
 	return id, nil
 }

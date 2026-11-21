@@ -156,6 +156,10 @@ type createAccountRequest struct {
 	Username   string `json:"username"`
 }
 
+type assignAccountEmployeeRequest struct {
+	EmployeeID int64 `json:"employee_id" binding:"required"`
+}
+
 type createEmployeeRequest struct {
 	CompanyID int64  `json:"company_id"`
 	Name      string `json:"name" binding:"required"`
@@ -202,6 +206,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	r.GET("/accounts", h.List)
 	r.GET("/accounts/:id", h.GetByID)
 	r.POST("/accounts", h.Create)
+	r.POST("/accounts/:id/assign", h.AssignEmployee)
 
 	// Employees
 	r.GET("/employees", h.ListEmployees)
@@ -246,10 +251,6 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	r.POST("/alerts/:id/resolve", h.ResolveAlert)
 
 	return r
-}
-
-func (h *Handler) Run(addr string) error {
-	return h.InitRoutes().Run(addr)
 }
 
 func (h *Handler) Health(c *gin.Context) {
@@ -410,6 +411,55 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(201, acc)
+}
+
+func (h *Handler) AssignEmployee(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	var req assignAccountEmployeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if req.EmployeeID <= 0 {
+		c.JSON(400, gin.H{"error": "employee_id must be a positive number"})
+		return
+	}
+
+	if h.accountUsecase == nil {
+		mockMu.Lock()
+		found := false
+		for i := range mockAccounts {
+			if mockAccounts[i].ID == id {
+				mockAccounts[i].EmployeeID = req.EmployeeID
+				found = true
+				break
+			}
+		}
+		mockMu.Unlock()
+		if !found {
+			c.JSON(404, gin.H{"error": "account not found"})
+			return
+		}
+		c.JSON(200, gin.H{"status": "assigned"})
+		return
+	}
+
+	err = h.accountUsecase.AssignEmployee(c.Request.Context(), companyID, id, req.EmployeeID)
+	if err != nil {
+		handleUsecaseError(c, err, "account not found")
+		return
+	}
+	c.JSON(200, gin.H{"status": "assigned"})
 }
 
 // --- Employees ---
@@ -589,13 +639,19 @@ func (h *Handler) DeactivateEmployee(c *gin.Context) {
 
 	if h.employeeUsecase == nil {
 		mockMu.Lock()
+		found := false
 		for i := range mockEmployees {
 			if mockEmployees[i].ID == id {
 				mockEmployees[i].IsActive = false
+				found = true
 				break
 			}
 		}
 		mockMu.Unlock()
+		if !found {
+			c.JSON(404, gin.H{"error": "employee not found"})
+			return
+		}
 		c.JSON(200, gin.H{"status": "deactivated"})
 		return
 	}
@@ -882,8 +938,8 @@ func (h *Handler) ListMessagesByChat(c *gin.Context) {
 	limit := 50
 	if l := c.Query("limit"); l != "" {
 		parsedLimit, err := strconv.Atoi(l)
-		if err != nil || parsedLimit <= 0 {
-			c.JSON(400, gin.H{"error": "limit must be a positive number"})
+		if err != nil || parsedLimit <= 0 || parsedLimit > 100 {
+			c.JSON(400, gin.H{"error": "limit must be between 1 and 100"})
 			return
 		}
 		limit = parsedLimit

@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/kraconst/GO_server/internal/domain"
@@ -9,6 +10,29 @@ import (
 
 // Analytics reads messages through the same company-scoped access checks as history.
 func (u *MessageUsecase) Analytics(ctx context.Context, companyID, chatID int64) (*domain.ChatAnalytics, error) {
+	if companyID <= 0 {
+		return nil, fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
+	if chatID <= 0 {
+		return nil, fmt.Errorf("%w: invalid chat_id", domain.ErrValidation)
+	}
+
+	if u.chats != nil {
+		chat, err := u.chats.GetByID(ctx, chatID)
+		if err != nil {
+			return nil, err
+		}
+		if u.accounts != nil {
+			acc, err := u.accounts.GetByID(ctx, chat.AccountID)
+			if err != nil {
+				return nil, err
+			}
+			if acc.CompanyID != companyID {
+				return nil, fmt.Errorf("%w: chat not found", domain.ErrNotFound)
+			}
+		}
+	}
+
 	a := newChatAnalytics(chatID)
 	var totalResponse float64
 	const pageSize = 200
@@ -16,7 +40,10 @@ func (u *MessageUsecase) Analytics(ctx context.Context, companyID, chatID int64)
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		messages, err := u.ListByChat(ctx, companyID, chatID, pageSize, offset)
+		if u.messages == nil {
+			break
+		}
+		messages, err := u.messages.ListByChat(ctx, companyID, chatID, pageSize, offset)
 		if err != nil {
 			return nil, err
 		}

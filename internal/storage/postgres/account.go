@@ -48,7 +48,7 @@ func (s *AccountStorage) Create(ctx context.Context, acc domain.Account) (int64,
 		createdAt,
 	).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("insert account: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert account: %w", err))
 	}
 
 	// Записываем первоначальное назначение ответственного сотрудника
@@ -58,7 +58,7 @@ func (s *AccountStorage) Create(ctx context.Context, acc domain.Account) (int64,
 			VALUES ($1, $2, $3)
 		`
 		if _, err := tx.ExecContext(ctx, assignQuery, id, acc.EmployeeID, createdAt); err != nil {
-			return 0, fmt.Errorf("insert initial assignment: %w", err)
+			return 0, mapPgError(fmt.Errorf("insert initial assignment: %w", err))
 		}
 	}
 
@@ -149,13 +149,13 @@ func (s *AccountStorage) AssignEmployee(ctx context.Context, accountID, employee
 
 	now := time.Now().UTC()
 
-	// Проверяем существование аккаунта
-	var exists bool
-	if err := tx.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM accounts WHERE id = $1)`, accountID); err != nil {
-		return fmt.Errorf("check account exists: %w", err)
-	}
-	if !exists {
-		return domain.ErrNotFound
+	// Проверяем существование аккаунта и блокируем его для предотвращения параллельных назначений
+	var accID int64
+	if err := tx.GetContext(ctx, &accID, `SELECT id FROM accounts WHERE id = $1 FOR UPDATE`, accountID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return mapPgError(fmt.Errorf("lock account for update: %w", err))
 	}
 
 	// Закрываем предыдущее активное назначение
@@ -165,7 +165,7 @@ func (s *AccountStorage) AssignEmployee(ctx context.Context, accountID, employee
 		WHERE account_id = $2 AND to_time IS NULL
 	`
 	if _, err := tx.ExecContext(ctx, closeQuery, now, accountID); err != nil {
-		return fmt.Errorf("close previous assignment: %w", err)
+		return mapPgError(fmt.Errorf("close previous assignment: %w", err))
 	}
 
 	// Создаем новую запись назначения
@@ -174,17 +174,17 @@ func (s *AccountStorage) AssignEmployee(ctx context.Context, accountID, employee
 		VALUES ($1, $2, $3)
 	`
 	if _, err := tx.ExecContext(ctx, insertQuery, accountID, employeeID, now); err != nil {
-		return fmt.Errorf("insert new assignment: %w", err)
+		return mapPgError(fmt.Errorf("insert new assignment: %w", err))
 	}
 
 	// Обновляем текущего ответственного в таблице accounts
 	updateAccQuery := `UPDATE accounts SET employee_id = $1 WHERE id = $2`
 	if _, err := tx.ExecContext(ctx, updateAccQuery, employeeID, accountID); err != nil {
-		return fmt.Errorf("update account employee_id: %w", err)
+		return mapPgError(fmt.Errorf("update account employee_id: %w", err))
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
+		return mapPgError(fmt.Errorf("commit tx: %w", err))
 	}
 	return nil
 }

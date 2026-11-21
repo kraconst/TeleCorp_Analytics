@@ -97,7 +97,7 @@ func TestContactUsecase_Create(t *testing.T) {
 		}
 	})
 
-	t.Run("fallback when GetByID fails after create", func(t *testing.T) {
+	t.Run("returns error when GetByID fails after create", func(t *testing.T) {
 		repo := &mockContactRepo{
 			createFn: func(ctx context.Context, c domain.Contact) (int64, error) {
 				return 42, nil
@@ -108,12 +108,9 @@ func TestContactUsecase_Create(t *testing.T) {
 		}
 
 		uc := usecase.NewContactUsecase(repo)
-		c, err := uc.Create(ctx, domain.Contact{CompanyID: 1, TelegramUserID: 123, Name: "John Doe"})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if c.ID != 42 {
-			t.Fatalf("expected ID 42, got %d", c.ID)
+		_, err := uc.Create(ctx, domain.Contact{CompanyID: 1, TelegramUserID: 123, Name: "John Doe"})
+		if err == nil {
+			t.Fatal("expected error when GetByID fails after create, got nil")
 		}
 	})
 }

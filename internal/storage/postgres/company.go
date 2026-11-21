@@ -41,7 +41,7 @@ func (s *CompanyStorage) Create(ctx context.Context, comp domain.Company) (int64
 	var id int64
 	err := s.db.QueryRowContext(ctx, query, comp.Name, tz, threshold, createdAt).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("insert company: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert company: %w", err))
 	}
 	return id, nil
 }

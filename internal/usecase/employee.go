@@ -47,8 +47,7 @@ func (u *EmployeeUsecase) Create(ctx context.Context, input CreateEmployeeInput)
 
 	created, err := u.employees.GetByID(ctx, id)
 	if err != nil {
-		emp.ID = id
-		return &emp, nil
+		return nil, fmt.Errorf("get created employee: %w", err)
 	}
 	return created, nil
 }
