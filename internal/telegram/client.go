@@ -4,9 +4,10 @@ package telegram
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
-	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/gotd/td/session"
 	gotd "github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/telegram/dcs"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
@@ -32,7 +34,10 @@ type Config struct {
 }
 
 // Client owns one account's connection. Use a separate session path per account.
-type Client struct{ client *gotd.Client }
+type Client struct {
+	client     *gotd.Client
+	dispatcher tg.UpdateDispatcher
+}
 
 func New(cfg Config) (*Client, error) {
 	if cfg.APIID <= 0 || strings.TrimSpace(cfg.APIHash) == "" {
@@ -45,9 +50,10 @@ func New(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
 
+	dispatcher := tg.NewUpdateDispatcher()
 	opts := gotd.Options{
 		SessionStorage: &session.FileStorage{Path: cfg.SessionPath},
-		NoUpdates:      true,
+		UpdateHandler:  dispatcher,
 	}
 
 	proxyAddr := strings.TrimSpace(cfg.Proxy)
@@ -61,7 +67,19 @@ func New(cfg Config) (*Client, error) {
 		})
 	}
 
-	return &Client{client: gotd.NewClient(cfg.APIID, cfg.APIHash, opts)}, nil
+	return &Client{
+		client:     gotd.NewClient(cfg.APIID, cfg.APIHash, opts),
+		dispatcher: dispatcher,
+	}, nil
+}
+
+type bufferedConn struct {
+	net.Conn
+	r io.Reader
+}
+
+func (b *bufferedConn) Read(p []byte) (int, error) {
+	return b.r.Read(p)
 }
 
 func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
@@ -87,12 +105,31 @@ func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
 		}, nil
 
 	case "http", "https":
+		isTLS := strings.ToLower(proxyURL.Scheme) == "https"
 		return func(ctx context.Context, network, addr string) (net.Conn, error) {
 			var d net.Dialer
 			conn, err := d.DialContext(ctx, "tcp", proxyURL.Host)
 			if err != nil {
 				return nil, fmt.Errorf("connect to proxy %s: %w", proxyURL.Host, err)
 			}
+
+			if isTLS {
+				tlsConn := tls.Client(conn, &tls.Config{
+					ServerName: proxyURL.Hostname(),
+				})
+				if err := tlsConn.HandshakeContext(ctx); err != nil {
+					conn.Close()
+					return nil, fmt.Errorf("tls handshake to proxy %s: %w", proxyURL.Host, err)
+				}
+				conn = tlsConn
+			}
+
+			// Handshake deadline to prevent hanging connections
+			deadline := time.Now().Add(15 * time.Second)
+			if d, ok := ctx.Deadline(); ok && d.Before(deadline) {
+				deadline = d
+			}
+			_ = conn.SetDeadline(deadline)
 
 			req := &http.Request{
 				Method: "CONNECT",
@@ -110,20 +147,29 @@ func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
 				return nil, fmt.Errorf("send CONNECT to proxy: %w", err)
 			}
 
-			resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+			bufReader := bufio.NewReader(conn)
+			resp, err := http.ReadResponse(bufReader, req)
 			if err != nil {
 				conn.Close()
 				return nil, fmt.Errorf("read CONNECT response: %w", err)
 			}
+			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				conn.Close()
 				return nil, fmt.Errorf("proxy returned status %s", resp.Status)
 			}
-			return conn, nil
+
+			// Clear deadline after handshake
+			_ = conn.SetDeadline(time.Time{})
+
+			return &bufferedConn{
+				Conn: conn,
+				r:    bufReader,
+			}, nil
 		}, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported proxy scheme %q (supported: socks5, http, https)", proxyURL.Scheme)
+		return nil, fmt.Errorf("unsupported proxy scheme %q (supported: socks5, socks5h, http, https)", proxyURL.Scheme)
 	}
 }
 
@@ -174,8 +220,8 @@ func is2FARequired(err error) bool {
 		strings.Contains(err.Error(), "SESSION_PASSWORD_NEEDED")
 }
 
-// InspectQR exports a login token (for QR login / tg:// link) and waits for user confirmation on an authorized device.
-func (c *Client) InspectQR(ctx context.Context, apiID int, apiHash string, onURL func(string), passwordPrompt func() (string, error), limit int) (Profile, []Dialog, error) {
+// InspectQR exports a login token (for QR login) and waits for user confirmation on an authorized device.
+func (c *Client) InspectQR(ctx context.Context, onURL func(string), passwordPrompt func() (string, error), limit int) (Profile, []Dialog, error) {
 	var profile Profile
 	var dialogs []Dialog
 	if limit < 1 || limit > 100 {
@@ -184,106 +230,34 @@ func (c *Client) InspectQR(ctx context.Context, apiID int, apiHash string, onURL
 
 	err := c.client.Run(ctx, func(ctx context.Context) error {
 		status, err := c.client.Auth().Status(ctx)
-		if err != nil || !status.Authorized {
-			res, err := c.client.API().AuthExportLoginToken(ctx, &tg.AuthExportLoginTokenRequest{
-				APIID:   apiID,
-				APIHash: apiHash,
-			})
+		if err != nil {
+			return fmt.Errorf("check auth status: %w", err)
+		}
+
+		if !status.Authorized {
+			loggedIn := qrlogin.OnLoginToken(c.dispatcher)
+			show := func(ctx context.Context, token qrlogin.Token) error {
+				if onURL != nil {
+					onURL(token.URL())
+				}
+				return nil
+			}
+
+			_, err := c.client.QR().Auth(ctx, loggedIn, show)
 			if err != nil {
-				return fmt.Errorf("export login token: %w", err)
-			}
-
-			tok, ok := res.(*tg.AuthLoginToken)
-			if !ok {
-				return fmt.Errorf("unexpected login token response: %T", res)
-			}
-
-			link := "tg://login?token=" + base64.RawURLEncoding.EncodeToString(tok.Token)
-			if onURL != nil {
-				onURL(link)
-			}
-
-			ticker := time.NewTicker(2 * time.Second)
-			defer ticker.Stop()
-
-			authorized := false
-			for !authorized {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-ticker.C:
-					res, err := c.client.API().AuthExportLoginToken(ctx, &tg.AuthExportLoginTokenRequest{
-						APIID:   apiID,
-						APIHash: apiHash,
-					})
+				if is2FARequired(err) {
+					if passwordPrompt == nil {
+						return fmt.Errorf("2FA password required")
+					}
+					pass, err := passwordPrompt()
 					if err != nil {
-						if is2FARequired(err) {
-							if passwordPrompt == nil {
-								return fmt.Errorf("2FA password required")
-							}
-							for {
-								pass, err := passwordPrompt()
-								if err != nil {
-									return fmt.Errorf("read 2FA password: %w", err)
-								}
-								if _, err := c.client.Auth().Password(ctx, pass); err != nil {
-									if errors.Is(err, auth.ErrPasswordInvalid) || strings.Contains(err.Error(), "PASSWORD_HASH_INVALID") {
-										fmt.Fprintln(os.Stderr, "Invalid 2FA password, please try again.")
-										continue
-									}
-									return fmt.Errorf("check 2FA password: %w", err)
-								}
-								authorized = true
-								break
-							}
-							break
-						}
-						return fmt.Errorf("check login token status: %w", err)
+						return fmt.Errorf("read 2FA password: %w", err)
 					}
-
-					switch t := res.(type) {
-					case *tg.AuthLoginToken:
-						newLink := "tg://login?token=" + base64.RawURLEncoding.EncodeToString(t.Token)
-						if newLink != link {
-							link = newLink
-							if onURL != nil {
-								onURL(link)
-							}
-						}
-					case *tg.AuthLoginTokenMigrateTo:
-						if err := c.client.MigrateTo(ctx, t.DCID); err != nil {
-							return fmt.Errorf("migrate to DC %d: %w", t.DCID, err)
-						}
-						importRes, err := c.client.API().AuthImportLoginToken(ctx, t.Token)
-						if err != nil {
-							if is2FARequired(err) {
-								if passwordPrompt == nil {
-									return fmt.Errorf("2FA password required")
-								}
-								for {
-									pass, err := passwordPrompt()
-									if err != nil {
-										return fmt.Errorf("read 2FA password: %w", err)
-									}
-									if _, err := c.client.Auth().Password(ctx, pass); err != nil {
-										if errors.Is(err, auth.ErrPasswordInvalid) || strings.Contains(err.Error(), "PASSWORD_HASH_INVALID") {
-											fmt.Fprintln(os.Stderr, "Invalid 2FA password, please try again.")
-											continue
-										}
-										return fmt.Errorf("check 2FA password: %w", err)
-									}
-									authorized = true
-									break
-								}
-								break
-							}
-							return fmt.Errorf("import login token on DC %d: %w", t.DCID, err)
-						}
-						_ = importRes
-						authorized = true
-					case *tg.AuthLoginTokenSuccess:
-						authorized = true
+					if _, err := c.client.Auth().Password(ctx, pass); err != nil {
+						return fmt.Errorf("check 2FA password: %w", err)
 					}
+				} else {
+					return fmt.Errorf("QR login: %w", err)
 				}
 			}
 		}
@@ -304,49 +278,81 @@ func (c *Client) fetchDialogs(ctx context.Context, limit int, dialogs *[]Dialog)
 	if err != nil {
 		return fmt.Errorf("get dialogs: %w", err)
 	}
-	var items []tg.DialogClass
-	var users []tg.UserClass
-	var chats []tg.ChatClass
+
+	titleByPeer := make(map[string]string)
 	switch r := result.(type) {
 	case *tg.MessagesDialogs:
-		items, users, chats = r.Dialogs, r.Users, r.Chats
+		for _, u := range r.Users {
+			if user, ok := u.(*tg.User); ok {
+				titleByPeer[fmt.Sprintf("user_%d", user.ID)] = strings.TrimSpace(user.FirstName + " " + user.LastName)
+			}
+		}
+		for _, ch := range r.Chats {
+			switch c := ch.(type) {
+			case *tg.Chat:
+				titleByPeer[fmt.Sprintf("chat_%d", c.ID)] = c.Title
+			case *tg.Channel:
+				titleByPeer[fmt.Sprintf("channel_%d", c.ID)] = c.Title
+			}
+		}
+		for _, d := range r.Dialogs {
+			if diag, ok := d.(*tg.Dialog); ok {
+				var id int64
+				var kind string
+				switch p := diag.Peer.(type) {
+				case *tg.PeerUser:
+					id = p.UserID
+					kind = "user"
+				case *tg.PeerChat:
+					id = p.ChatID
+					kind = "group"
+				case *tg.PeerChannel:
+					id = p.ChannelID
+					kind = "channel"
+				}
+				name := titleByPeer[fmt.Sprintf("%s_%d", kind, id)]
+				if name == "" {
+					name = fmt.Sprintf("ID %d", id)
+				}
+				*dialogs = append(*dialogs, Dialog{ID: id, Kind: kind, Name: name})
+			}
+		}
 	case *tg.MessagesDialogsSlice:
-		items, users, chats = r.Dialogs, r.Users, r.Chats
-	default:
-		return fmt.Errorf("unexpected dialogs response: %T", result)
-	}
-	names := make(map[int64]string)
-	for _, u := range users {
-		if u, ok := u.(*tg.User); ok {
-			names[u.ID] = strings.TrimSpace(u.FirstName + " " + u.LastName)
+		for _, u := range r.Users {
+			if user, ok := u.(*tg.User); ok {
+				titleByPeer[fmt.Sprintf("user_%d", user.ID)] = strings.TrimSpace(user.FirstName + " " + user.LastName)
+			}
 		}
-	}
-	chatNames := make(map[int64]string)
-	for _, chat := range chats {
-		switch chat := chat.(type) {
-		case *tg.Chat:
-			chatNames[chat.ID] = chat.Title
-		case *tg.Channel:
-			chatNames[chat.ID] = chat.Title
+		for _, ch := range r.Chats {
+			switch c := ch.(type) {
+			case *tg.Chat:
+				titleByPeer[fmt.Sprintf("chat_%d", c.ID)] = c.Title
+			case *tg.Channel:
+				titleByPeer[fmt.Sprintf("channel_%d", c.ID)] = c.Title
+			}
 		}
-	}
-	for _, item := range items {
-		d, ok := item.(*tg.Dialog)
-		if !ok {
-			continue
+		for _, d := range r.Dialogs {
+			if diag, ok := d.(*tg.Dialog); ok {
+				var id int64
+				var kind string
+				switch p := diag.Peer.(type) {
+				case *tg.PeerUser:
+					id = p.UserID
+					kind = "user"
+				case *tg.PeerChat:
+					id = p.ChatID
+					kind = "group"
+				case *tg.PeerChannel:
+					id = p.ChannelID
+					kind = "channel"
+				}
+				name := titleByPeer[fmt.Sprintf("%s_%d", kind, id)]
+				if name == "" {
+					name = fmt.Sprintf("ID %d", id)
+				}
+				*dialogs = append(*dialogs, Dialog{ID: id, Kind: kind, Name: name})
+			}
 		}
-		var dialog Dialog
-		switch p := d.Peer.(type) {
-		case *tg.PeerUser:
-			dialog = Dialog{ID: p.UserID, Kind: "user", Name: names[p.UserID]}
-		case *tg.PeerChat:
-			dialog = Dialog{ID: p.ChatID, Kind: "group", Name: chatNames[p.ChatID]}
-		case *tg.PeerChannel:
-			dialog = Dialog{ID: p.ChannelID, Kind: "channel", Name: chatNames[p.ChannelID]}
-		default:
-			continue
-		}
-		*dialogs = append(*dialogs, dialog)
 	}
 	return nil
 }

@@ -1,24 +1,25 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
-	"github.com/skip2/go-qrcode"
 	"golang.org/x/term"
+	"rsc.io/qr"
 
 	"github.com/kraconst/GO_server/internal/telegram"
 )
@@ -63,7 +64,11 @@ func run() error {
 	}
 
 	if proxyAddr != "" {
-		fmt.Printf("Using proxy: %s\n", proxyAddr)
+		if u, err := url.Parse(proxyAddr); err == nil {
+			fmt.Printf("Using proxy: %s\n", u.Redacted())
+		} else {
+			fmt.Println("Using proxy: (configured)")
+		}
 	} else {
 		fmt.Println("Proxy disabled: connecting directly (via system network / VPN)...")
 	}
@@ -85,6 +90,14 @@ func run() error {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
 
+		var browserOpened bool
+		var htmlFilePath string
+		defer func() {
+			if htmlFilePath != "" {
+				_ = os.Remove(htmlFilePath)
+			}
+		}()
+
 		fmt.Println("Connecting to Telegram for QR login...")
 		onURL := func(link string) {
 			fmt.Printf("\n============================================================\n")
@@ -95,20 +108,19 @@ func run() error {
 			fmt.Printf("3. Point your camera at the QR code below\n")
 			fmt.Printf("============================================================\n\n")
 
-			qrObj, err := qrcode.New(link, qrcode.Medium)
+			qrCode, err := qr.Encode(link, qr.M)
 			if err == nil {
 				// Print terminal QR code using half-block Unicode characters
-				fmt.Print(qrObj.ToSmallString(false))
+				fmt.Print(generateTerminalQR(qrCode))
 
-				// Generate an HTML page with the QR code and open it in the default browser
-				pngBytes, err := qrObj.PNG(512)
-				if err == nil {
-					b64PNG := base64.StdEncoding.EncodeToString(pngBytes)
-					htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+				// Generate an HTML page with the QR code
+				b64PNG := base64.StdEncoding.EncodeToString(qrCode.PNG())
+				htmlContent := fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="5">
 <title>Telegram Device Login</title>
 <style>
   * { box-sizing: border-box; }
@@ -157,6 +169,7 @@ func run() error {
     color: #6c7883;
   }
 </style>
+<script>setTimeout(function(){ location.reload(); }, 5000);</script>
 </head>
 <body>
 <div class="card">
@@ -173,13 +186,19 @@ func run() error {
 </div>
 </body>
 </html>`, b64PNG)
-					dir := filepath.Dir(path)
-					_ = os.MkdirAll(dir, 0700)
-					htmlPath := filepath.Join(dir, "qr_login.html")
-					if err := os.WriteFile(htmlPath, []byte(htmlContent), 0600); err == nil {
-						absHTML, _ := filepath.Abs(htmlPath)
-						fmt.Printf("Opened QR login page: %s\n", absHTML)
-						_ = exec.Command("cmd", "/c", "start", "", absHTML).Start()
+				dir := filepath.Dir(path)
+				_ = os.MkdirAll(dir, 0700)
+				htmlPath := filepath.Join(dir, "qr_login.html")
+				htmlFilePath = htmlPath
+				if err := os.WriteFile(htmlPath, []byte(htmlContent), 0600); err == nil {
+					absHTML, _ := filepath.Abs(htmlPath)
+					if !browserOpened {
+						browserOpened = true
+						if err := openBrowser(absHTML); err == nil {
+							fmt.Printf("Opened QR login page: %s\n", absHTML)
+						} else {
+							fmt.Printf("QR login page written to: %s\n", absHTML)
+						}
 					}
 				}
 			} else {
@@ -192,7 +211,7 @@ func run() error {
 			return secret("2FA password: ")
 		}
 
-		profile, dialogs, err := client.InspectQR(ctx, id, os.Getenv("TELEGRAM_API_HASH"), onURL, passwordPrompt, *limit)
+		profile, dialogs, err := client.InspectQR(ctx, onURL, passwordPrompt, *limit)
 		if err != nil {
 			return err
 		}
@@ -247,6 +266,53 @@ func run() error {
 	return nil
 }
 
+func openBrowser(target string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("cmd", "/c", "start", "", target).Start()
+	case "darwin":
+		return exec.Command("open", target).Start()
+	default:
+		return exec.Command("xdg-open", target).Start()
+	}
+}
+
+func generateTerminalQR(code *qr.Code) string {
+	border := 2
+	size := code.Size
+	fullSize := size + border*2
+
+	isBlack := func(x, y int) bool {
+		if x < border || x >= border+size || y < border || y >= border+size {
+			return false
+		}
+		return code.Black(x-border, y-border)
+	}
+
+	var sb strings.Builder
+	for y := 0; y < fullSize; y += 2 {
+		for x := 0; x < fullSize; x++ {
+			top := isBlack(x, y)
+			bot := false
+			if y+1 < fullSize {
+				bot = isBlack(x, y+1)
+			}
+			switch {
+			case top && bot:
+				sb.WriteString(" ")
+			case top && !bot:
+				sb.WriteString("▀")
+			case !top && bot:
+				sb.WriteString("▄")
+			default:
+				sb.WriteString("█")
+			}
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 func loadDotEnv() {
 	data, err := os.ReadFile(".env")
 	if err != nil {
@@ -261,13 +327,30 @@ func loadDotEnv() {
 		parts := strings.SplitN(line, "=", 2)
 		if len(parts) == 2 {
 			k := strings.TrimSpace(parts[0])
-			v := strings.TrimSpace(parts[1])
-			v = strings.Trim(v, `"'`)
+			v := parseEnvVal(parts[1])
 			if os.Getenv(k) == "" && v != "" {
 				os.Setenv(k, v)
 			}
 		}
 	}
+}
+
+func parseEnvVal(v string) string {
+	v = strings.TrimSpace(v)
+	if len(v) == 0 {
+		return ""
+	}
+	if v[0] == '"' || v[0] == '\'' {
+		quote := v[0]
+		end := strings.IndexByte(v[1:], quote)
+		if end != -1 {
+			return v[1 : 1+end]
+		}
+	}
+	if idx := strings.Index(v, "#"); idx != -1 {
+		v = strings.TrimSpace(v[:idx])
+	}
+	return v
 }
 
 func validPhone(phone string) bool {
@@ -298,19 +381,10 @@ func (p *prompts) AcceptTermsOfService(context.Context, tg.HelpTermsOfService) e
 }
 
 func secret(label string) (string, error) {
-	fmt.Fprint(os.Stderr, label)
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		reader := bufio.NewReader(os.Stdin)
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			return "", errors.New("input is empty")
-		}
-		return line, nil
+		return "", errors.New("cannot read secret from non-interactive terminal")
 	}
+	fmt.Fprint(os.Stderr, label)
 	value, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Fprintln(os.Stderr)
 	if err != nil {

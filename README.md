@@ -132,7 +132,7 @@ go test ./internal/storage/postgres -run TestAlertPostgresLifecycle -v
 MTProto (`gotd/td`). HTTP-сервер и база данных для неё не нужны.
 Ключи приложения получают в [API development tools](https://my.telegram.org).
 
-В интерактивном PowerShell задайте переменные окружения:
+Утилита автоматически загружает переменные из файла `.env` (если он есть), либо их можно задать вручную в интерактивном PowerShell:
 
 ```powershell
 $env:TELEGRAM_API_ID = "123456"
@@ -142,9 +142,14 @@ $env:TELEGRAM_SESSION_PATH = "./var/telegram/account-a.session"
 go run ./cmd/telegram-dev -limit 20
 ```
 
-Пример переменных есть в `.env.example`; команда не загружает `.env` автоматически.
+Пример переменных есть в `.env.example`. Переменные окружения процесса имеют приоритет над `.env`.
+Для входа по QR-коду используйте флаг `-qr`:
+```powershell
+go run ./cmd/telegram-dev -qr
+```
+Если нужно отключить прокси и работать напрямую (например, через системный VPN), используйте флаг `-no-proxy` или переменную `USE_PROXY=false`.
 `TELEGRAM_SESSION_PATH` необязательна: по умолчанию используется
-`./var/telegram/<номер без плюса>.session`. Для каждого аккаунта нужен свой файл.
+`./var/telegram/<номер без плюса>.session` (или `account-a.session` для `-qr`). Для каждого аккаунта нужен свой файл.
 `-limit` принимает значения от 1 до 100 (по умолчанию 20).
 
 ## Как вносить изменения
