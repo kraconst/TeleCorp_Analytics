@@ -39,21 +39,23 @@ func (s *MessageStorage) Create(ctx context.Context, msg domain.Message) (int64,
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
-		return 0, fmt.Errorf("insert message: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert message: %w", err))
 	}
 	return id, nil
 }
 
-func (s *MessageStorage) ListByChat(ctx context.Context, chatID int64, limit, offset int) ([]domain.Message, error) {
+func (s *MessageStorage) ListByChat(ctx context.Context, companyID, chatID int64, limit, offset int) ([]domain.Message, error) {
 	query := `
-		SELECT id, chat_id, telegram_message_id, direction, text, media_type, sent_at
-		FROM messages
-		WHERE chat_id = $1
-		ORDER BY sent_at ASC
-		LIMIT $2 OFFSET $3
+		SELECT m.id, m.chat_id, m.telegram_message_id, m.direction, m.text, m.media_type, m.sent_at
+		FROM messages m
+		JOIN chats c ON c.id = m.chat_id
+		JOIN accounts a ON a.id = c.account_id
+		WHERE m.chat_id = $1 AND a.company_id = $2
+		ORDER BY m.sent_at ASC, m.id ASC
+		LIMIT $3 OFFSET $4
 	`
 	messages := make([]domain.Message, 0)
-	err := s.db.SelectContext(ctx, &messages, query, chatID, limit, offset)
+	err := s.db.SelectContext(ctx, &messages, query, chatID, companyID, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("list messages by chat: %w", err)
 	}

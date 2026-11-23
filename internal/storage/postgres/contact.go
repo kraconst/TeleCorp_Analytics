@@ -35,7 +35,7 @@ func (s *ContactStorage) Create(ctx context.Context, c domain.Contact) (int64, e
 		c.Username,
 	).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("upsert contact: %w", err)
+		return 0, mapPgError(fmt.Errorf("upsert contact: %w", err))
 	}
 	return id, nil
 }

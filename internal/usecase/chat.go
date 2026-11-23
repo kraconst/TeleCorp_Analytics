@@ -2,19 +2,37 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/kraconst/GO_server/internal/domain"
 )
 
-type ChatUsecase struct {
-	chats ChatRepository
+type ChatDetails struct {
+	domain.Chat
+	Contact *domain.Contact     `json:"contact,omitempty"`
+	Summary *domain.ChatSummary `json:"summary,omitempty"`
 }
 
-func NewChatUsecase(chats ChatRepository) *ChatUsecase {
+type ChatUsecase struct {
+	chats     ChatRepository
+	contacts  ContactRepository
+	summaries ChatSummaryRepository
+	accounts  AccountRepository
+}
+
+func NewChatUsecase(
+	chats ChatRepository,
+	contacts ContactRepository,
+	summaries ChatSummaryRepository,
+	accounts AccountRepository,
+) *ChatUsecase {
 	return &ChatUsecase{
-		chats: chats,
+		chats:     chats,
+		contacts:  contacts,
+		summaries: summaries,
+		accounts:  accounts,
 	}
 }
 
@@ -43,12 +61,18 @@ func isValidChatPriority(priority domain.ChatPriority) bool {
 		priority == domain.ChatPriorityHigh
 }
 
-func (u *ChatUsecase) SetManualStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error {
+func (u *ChatUsecase) SetManualStatus(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) error {
+	if companyID <= 0 {
+		return fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
 	if chatID <= 0 {
 		return fmt.Errorf("%w: invalid chat_id", domain.ErrValidation)
 	}
 	if !isValidChatStatus(status) {
 		return fmt.Errorf("%w: invalid chat status '%s'", domain.ErrValidation, status)
+	}
+	if _, err := u.GetByID(ctx, companyID, chatID); err != nil {
+		return err
 	}
 
 	return u.chats.UpdateStatus(ctx, chatID, status, domain.StatusSourceManual)
@@ -68,11 +92,60 @@ func (u *ChatUsecase) ListByCompany(ctx context.Context, companyID int64, status
 	return u.chats.ListByCompany(ctx, companyID, status, employeeID)
 }
 
-func (u *ChatUsecase) GetByID(ctx context.Context, id int64) (*domain.Chat, error) {
+func (u *ChatUsecase) GetByID(ctx context.Context, companyID, id int64) (*domain.Chat, error) {
+	if companyID <= 0 {
+		return nil, fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
 	if id <= 0 {
 		return nil, fmt.Errorf("%w: invalid id", domain.ErrValidation)
 	}
-	return u.chats.GetByID(ctx, id)
+	chat, err := u.chats.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if u.accounts != nil {
+		acc, err := u.accounts.GetByID(ctx, chat.AccountID)
+		if err != nil {
+			return nil, err
+		}
+		if acc.CompanyID != companyID {
+			return nil, fmt.Errorf("%w: chat not found", domain.ErrNotFound)
+		}
+	}
+	return chat, nil
+}
+
+func (u *ChatUsecase) GetDetails(ctx context.Context, companyID, id int64) (*ChatDetails, error) {
+	chat, err := u.GetByID(ctx, companyID, id)
+	if err != nil {
+		return nil, err
+	}
+
+	details := &ChatDetails{
+		Chat: *chat,
+	}
+
+	if u.contacts != nil && chat.ContactID > 0 {
+		contact, err := u.contacts.GetByID(ctx, chat.ContactID)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("get contact for chat details: %w", err)
+		}
+		if err == nil && contact.CompanyID == companyID {
+			details.Contact = contact
+		}
+	}
+
+	if u.summaries != nil {
+		summary, err := u.summaries.GetByChatID(ctx, companyID, id)
+		if err != nil && !errors.Is(err, domain.ErrNotFound) {
+			return nil, fmt.Errorf("get summary for chat details: %w", err)
+		}
+		if err == nil {
+			details.Summary = summary
+		}
+	}
+
+	return details, nil
 }
 
 func (u *ChatUsecase) Create(ctx context.Context, chat domain.Chat) (*domain.Chat, error) {
@@ -81,6 +154,20 @@ func (u *ChatUsecase) Create(ctx context.Context, chat domain.Chat) (*domain.Cha
 	}
 	if chat.ContactID <= 0 {
 		return nil, fmt.Errorf("%w: invalid contact_id", domain.ErrValidation)
+	}
+
+	if u.accounts != nil && u.contacts != nil {
+		acc, err := u.accounts.GetByID(ctx, chat.AccountID)
+		if err != nil {
+			return nil, err
+		}
+		contact, err := u.contacts.GetByID(ctx, chat.ContactID)
+		if err != nil {
+			return nil, err
+		}
+		if acc.CompanyID != contact.CompanyID {
+			return nil, fmt.Errorf("%w: account and contact belong to different companies", domain.ErrForbidden)
+		}
 	}
 
 	if chat.Status == "" {
@@ -112,8 +199,7 @@ func (u *ChatUsecase) Create(ctx context.Context, chat domain.Chat) (*domain.Cha
 
 	created, err := u.chats.GetByID(ctx, id)
 	if err != nil {
-		chat.ID = id
-		return &chat, nil
+		return nil, fmt.Errorf("get created chat: %w", err)
 	}
 	return created, nil
 }

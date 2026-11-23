@@ -95,7 +95,7 @@ func TestContactUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 
 		t.Run("GetByID with invalid id", func(t *testing.T) {
 			uc := usecase.NewContactUsecase(&mockContactRepo{})
-			_, err := uc.GetByID(ctx, badID)
+			_, err := uc.GetByID(ctx, 1, badID)
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for id %d, got: %v", badID, err)
 			}
@@ -154,6 +154,9 @@ func TestContactUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 					t.Errorf("username was not trimmed")
 				}
 				return 1, nil
+			},
+			getByIDFn: func(ctx context.Context, id int64) (*domain.Contact, error) {
+				return &domain.Contact{ID: id, CompanyID: 1, TelegramUserID: 1, Name: largeName, Username: largeUsername}, nil
 			},
 		}
 

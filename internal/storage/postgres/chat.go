@@ -58,7 +58,7 @@ func (s *ChatStorage) Create(ctx context.Context, chat domain.Chat) (int64, erro
 		chat.UnreadCount,
 	).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("insert chat: %w", err)
+		return 0, mapPgError(fmt.Errorf("insert chat: %w", err))
 	}
 	return id, nil
 }
@@ -117,7 +117,7 @@ func (s *ChatStorage) UpdateStatus(ctx context.Context, id int64, status domain.
 	`
 	res, err := s.db.ExecContext(ctx, query, status, source, id)
 	if err != nil {
-		return fmt.Errorf("update chat status: %w", err)
+		return mapPgError(fmt.Errorf("update chat status: %w", err))
 	}
 	rows, err := res.RowsAffected()
 	if err != nil {

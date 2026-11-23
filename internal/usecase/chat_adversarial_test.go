@@ -12,7 +12,7 @@ import (
 
 func TestChatUsecase_Adversarial_InvalidStatusStrings(t *testing.T) {
 	ctx := context.Background()
-	uc := usecase.NewChatUsecase(&mockChatRepo{})
+	uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
 
 	invalidStatuses := []string{
 		"",
@@ -30,7 +30,7 @@ func TestChatUsecase_Adversarial_InvalidStatusStrings(t *testing.T) {
 
 	for _, bad := range invalidStatuses {
 		t.Run("SetManualStatus with status "+bad, func(t *testing.T) {
-			err := uc.SetManualStatus(ctx, 1, domain.ChatStatus(bad))
+			err := uc.SetManualStatus(ctx, 1, 1, domain.ChatStatus(bad))
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for status %q, got: %v", bad, err)
 			}
@@ -66,23 +66,23 @@ func TestChatUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 
 	for _, badID := range invalidIDs {
 		t.Run("SetManualStatus boundary id", func(t *testing.T) {
-			uc := usecase.NewChatUsecase(&mockChatRepo{})
-			err := uc.SetManualStatus(ctx, badID, domain.ChatStatusNewLead)
+			uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+			err := uc.SetManualStatus(ctx, 1, badID, domain.ChatStatusNewLead)
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for id %d, got: %v", badID, err)
 			}
 		})
 
 		t.Run("GetByID boundary id", func(t *testing.T) {
-			uc := usecase.NewChatUsecase(&mockChatRepo{})
-			_, err := uc.GetByID(ctx, badID)
+			uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+			_, err := uc.GetByID(ctx, 1, badID)
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for id %d, got: %v", badID, err)
 			}
 		})
 
 		t.Run("ListByCompany boundary companyID", func(t *testing.T) {
-			uc := usecase.NewChatUsecase(&mockChatRepo{})
+			uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
 			_, err := uc.ListByCompany(ctx, badID, nil, nil)
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for companyID %d, got: %v", badID, err)
@@ -90,7 +90,7 @@ func TestChatUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 		})
 
 		t.Run("ListByCompany boundary employeeID", func(t *testing.T) {
-			uc := usecase.NewChatUsecase(&mockChatRepo{})
+			uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
 			empID := badID
 			_, err := uc.ListByCompany(ctx, 1, nil, &empID)
 			if !errors.Is(err, domain.ErrValidation) {
@@ -99,7 +99,7 @@ func TestChatUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 		})
 
 		t.Run("Create boundary accountID", func(t *testing.T) {
-			uc := usecase.NewChatUsecase(&mockChatRepo{})
+			uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
 			_, err := uc.Create(ctx, domain.Chat{AccountID: badID, ContactID: 1})
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for accountID %d, got: %v", badID, err)
@@ -107,7 +107,7 @@ func TestChatUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 		})
 
 		t.Run("Create boundary contactID", func(t *testing.T) {
-			uc := usecase.NewChatUsecase(&mockChatRepo{})
+			uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
 			_, err := uc.Create(ctx, domain.Chat{AccountID: 1, ContactID: badID})
 			if !errors.Is(err, domain.ErrValidation) {
 				t.Fatalf("expected ErrValidation for contactID %d, got: %v", badID, err)
@@ -126,8 +126,8 @@ func TestChatUsecase_Adversarial_BoundaryIDs(t *testing.T) {
 				return &domain.Chat{ID: id}, nil
 			},
 		}
-		uc := usecase.NewChatUsecase(repo)
-		chat, err := uc.GetByID(ctx, math.MaxInt64)
+		uc := usecase.NewChatUsecase(repo, nil, nil, nil)
+		chat, err := uc.GetByID(ctx, 1, math.MaxInt64)
 		if err != nil || !repoCalled || chat.ID != math.MaxInt64 {
 			t.Fatalf("expected successful call with MaxInt64, got err=%v, chat=%+v", err, chat)
 		}

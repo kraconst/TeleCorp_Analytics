@@ -20,30 +20,11 @@ func init() {
 }
 
 func setupTestRouter(h *handler.Handler) *gin.Engine {
-	r := gin.New()
-	r.Use(gin.Recovery())
-
-	r.GET("/health", h.Health)
-	r.GET("/accounts", h.List)
-	r.GET("/accounts/:id", h.GetByID)
-	r.POST("/accounts", h.Create)
-
-	r.GET("/employees", h.ListEmployees)
-	r.GET("/employees/:id", h.GetEmployeeByID)
-	r.POST("/employees", h.CreateEmployee)
-	r.POST("/employees/:id", h.UpdateEmployee)
-	r.POST("/employees/:id/deactivate", h.DeactivateEmployee)
-
-	r.GET("/chats", h.ListChats)
-	r.GET("/chats/:id", h.GetChatByID)
-	r.POST("/chats/:id/status", h.UpdateChatStatus)
-	r.GET("/chats/:id/messages", h.ListMessagesByChat)
-
-	return r
+	return h.InitRoutes()
 }
 
 func TestMockHandler_Health(t *testing.T) {
-	h := handler.New(nil, nil, nil, nil, nil)
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	r := setupTestRouter(h)
 
 	req, _ := http.NewRequest(http.MethodGet, "/health", nil)
@@ -56,7 +37,7 @@ func TestMockHandler_Health(t *testing.T) {
 }
 
 func TestMockHandler_ListChats(t *testing.T) {
-	h := handler.New(nil, nil, nil, nil, nil)
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	r := setupTestRouter(h)
 
 	t.Run("list all mock chats (sorted by LastMessageAt desc)", func(t *testing.T) {
@@ -149,7 +130,7 @@ func TestMockHandler_ListChats(t *testing.T) {
 }
 
 func TestMockHandler_GetChatByID(t *testing.T) {
-	h := handler.New(nil, nil, nil, nil, nil)
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	r := setupTestRouter(h)
 
 	t.Run("existing chat", func(t *testing.T) {
@@ -201,7 +182,7 @@ func TestMockHandler_GetChatByID(t *testing.T) {
 }
 
 func TestMockHandler_UpdateChatStatus(t *testing.T) {
-	h := handler.New(nil, nil, nil, nil, nil)
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	r := setupTestRouter(h)
 
 	t.Run("successful status update", func(t *testing.T) {
@@ -316,8 +297,8 @@ func TestUsecaseBackedHandler_Endpoints(t *testing.T) {
 		},
 	}
 
-	chatUsecase := usecase.NewChatUsecase(repo)
-	h := handler.New(nil, nil, nil, nil, chatUsecase)
+	chatUsecase := usecase.NewChatUsecase(repo, nil, nil, nil)
+	h := handler.New(nil, nil, nil, nil, chatUsecase, nil, nil, nil, nil, nil)
 	r := setupTestRouter(h)
 
 	t.Run("GET /chats with usecase", func(t *testing.T) {
@@ -372,6 +353,255 @@ func TestUsecaseBackedHandler_Endpoints(t *testing.T) {
 	t.Run("POST /chats/:id/status with usecase not found", func(t *testing.T) {
 		body := `{"status": "lost"}`
 		req, _ := http.NewRequest(http.MethodPost, "/chats/77/status", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", w.Code)
+		}
+	})
+}
+
+type handlerMockContactRepo struct {
+	getByIDFn func(ctx context.Context, id int64) (*domain.Contact, error)
+	listFn    func(ctx context.Context, companyID int64) ([]domain.Contact, error)
+}
+
+func (m *handlerMockContactRepo) Create(ctx context.Context, c domain.Contact) (int64, error) {
+	return 0, nil
+}
+func (m *handlerMockContactRepo) GetByID(ctx context.Context, id int64) (*domain.Contact, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
+	}
+	return nil, domain.ErrNotFound
+}
+func (m *handlerMockContactRepo) GetByTelegramID(ctx context.Context, companyID, tgUserID int64) (*domain.Contact, error) {
+	return nil, domain.ErrNotFound
+}
+func (m *handlerMockContactRepo) ListByCompany(ctx context.Context, companyID int64) ([]domain.Contact, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx, companyID)
+	}
+	return []domain.Contact{}, nil
+}
+
+type handlerMockSummaryRepo struct {
+	getByChatIDFn func(ctx context.Context, companyID, chatID int64) (*domain.ChatSummary, error)
+}
+
+func (m *handlerMockSummaryRepo) Upsert(ctx context.Context, s domain.ChatSummary) error {
+	return nil
+}
+func (m *handlerMockSummaryRepo) GetByChatID(ctx context.Context, companyID, chatID int64) (*domain.ChatSummary, error) {
+	if m.getByChatIDFn != nil {
+		return m.getByChatIDFn(ctx, companyID, chatID)
+	}
+	return nil, domain.ErrNotFound
+}
+
+func TestContacts_Handler(t *testing.T) {
+	t.Run("GET /contacts mock mode", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		req, _ := http.NewRequest(http.MethodGet, "/contacts", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var contacts []domain.Contact
+		if err := json.Unmarshal(w.Body.Bytes(), &contacts); err != nil {
+			t.Fatalf("failed to decode: %v", err)
+		}
+		if len(contacts) != 2 {
+			t.Fatalf("expected 2 contacts, got %d", len(contacts))
+		}
+	})
+
+	t.Run("GET /contacts/:id mock mode success", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		req, _ := http.NewRequest(http.MethodGet, "/contacts/1", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var contact domain.Contact
+		if err := json.Unmarshal(w.Body.Bytes(), &contact); err != nil {
+			t.Fatalf("failed to decode: %v", err)
+		}
+		if contact.ID != 1 {
+			t.Fatalf("expected contact id 1, got %d", contact.ID)
+		}
+	})
+
+	t.Run("GET /contacts/:id mock mode not found", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		req, _ := http.NewRequest(http.MethodGet, "/contacts/999", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", w.Code)
+		}
+	})
+
+	t.Run("GET /contacts with usecase", func(t *testing.T) {
+		repo := &handlerMockContactRepo{
+			listFn: func(ctx context.Context, companyID int64) ([]domain.Contact, error) {
+				return []domain.Contact{{ID: 42, Name: "Test Contact"}}, nil
+			},
+		}
+		uc := usecase.NewContactUsecase(repo)
+		h := handler.New(nil, nil, nil, uc, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		req, _ := http.NewRequest(http.MethodGet, "/contacts", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		var contacts []domain.Contact
+		if err := json.Unmarshal(w.Body.Bytes(), &contacts); err != nil || len(contacts) != 1 || contacts[0].ID != 42 {
+			t.Fatalf("unexpected contacts: %+v, %v", contacts, err)
+		}
+	})
+}
+
+func TestChatCompositeDetails_Handler(t *testing.T) {
+	chatRepo := &handlerMockChatRepo{
+		getByIDFn: func(ctx context.Context, id int64) (*domain.Chat, error) {
+			if id == 100 {
+				return &domain.Chat{
+					ID:            100,
+					AccountID:     1,
+					ContactID:     200,
+					Status:        domain.ChatStatusNegotiation,
+					LastMessageAt: time.Now().UTC(),
+				}, nil
+			}
+			return nil, domain.ErrNotFound
+		},
+	}
+	contactRepo := &handlerMockContactRepo{
+		getByIDFn: func(ctx context.Context, id int64) (*domain.Contact, error) {
+			if id == 200 {
+				return &domain.Contact{
+					ID:             200,
+					CompanyID:      1,
+					TelegramUserID: 12345,
+					Name:           "Ivan Ivanov",
+					Username:       "ivan",
+				}, nil
+			}
+			return nil, domain.ErrNotFound
+		},
+	}
+	summaryRepo := &handlerMockSummaryRepo{
+		getByChatIDFn: func(ctx context.Context, companyID, chatID int64) (*domain.ChatSummary, error) {
+			if chatID == 100 {
+				return &domain.ChatSummary{
+					ChatID:   100,
+					Topic:    "Enterprise Contract",
+					Risk:     domain.RiskMedium,
+					NextStep: "Send NDA",
+				}, nil
+			}
+			return nil, domain.ErrNotFound
+		},
+	}
+
+	chatUsecase := usecase.NewChatUsecase(chatRepo, contactRepo, summaryRepo, nil)
+	h := handler.New(nil, nil, nil, nil, chatUsecase, nil, nil, nil, nil, nil)
+	r := setupTestRouter(h)
+
+	req, _ := http.NewRequest(http.MethodGet, "/chats/100", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var details usecase.ChatDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &details); err != nil {
+		t.Fatalf("failed to decode ChatDetails: %v", err)
+	}
+
+	if details.ID != 100 {
+		t.Errorf("expected chat ID 100, got %d", details.ID)
+	}
+	if details.Contact == nil || details.Contact.Name != "Ivan Ivanov" {
+		t.Errorf("expected contact Ivan Ivanov, got %+v", details.Contact)
+	}
+	if details.Summary == nil || details.Summary.Topic != "Enterprise Contract" {
+		t.Errorf("expected summary topic 'Enterprise Contract', got %+v", details.Summary)
+	}
+}
+
+func TestHandler_AssignEmployee(t *testing.T) {
+	t.Run("mock mode success", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 2}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/1/assign", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+	})
+
+	t.Run("invalid account id", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 2}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/abc/assign", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("invalid employee id", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 0}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/1/assign", body)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", w.Code)
+		}
+	})
+
+	t.Run("account not found in mock mode", func(t *testing.T) {
+		h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+		r := setupTestRouter(h)
+
+		body := bytes.NewBufferString(`{"employee_id": 2}`)
+		req, _ := http.NewRequest(http.MethodPost, "/accounts/999/assign", body)
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)

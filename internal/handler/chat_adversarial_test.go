@@ -15,7 +15,7 @@ import (
 )
 
 func TestHandler_Adversarial_QueryParsing(t *testing.T) {
-	h := handler.New(nil, nil, nil, nil, nil)
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	r := setupTestRouter(h)
 
 	t.Run("malformed status query params return 400", func(t *testing.T) {
@@ -131,7 +131,7 @@ func TestHandler_Adversarial_QueryParsing(t *testing.T) {
 }
 
 func TestHandler_Adversarial_MockStateMutation(t *testing.T) {
-	h := handler.New(nil, nil, nil, nil, nil)
+	h := handler.New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	r := setupTestRouter(h)
 
 	t.Run("modifying status updates mockChats and consecutive GET /chats/:id returns updated manual status", func(t *testing.T) {

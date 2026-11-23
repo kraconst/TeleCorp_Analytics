@@ -2,8 +2,12 @@ package handler
 
 import (
 	"errors"
+	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,11 +16,17 @@ import (
 )
 
 type Handler struct {
-	accountUsecase  *usecase.AccountUsecase
-	employeeUsecase *usecase.EmployeeUsecase
-	messageUsecase  *usecase.MessageUsecase
-	contactUsecase  *usecase.ContactUsecase
-	chatUsecase     *usecase.ChatUsecase
+	accountUsecase           *usecase.AccountUsecase
+	employeeUsecase          *usecase.EmployeeUsecase
+	messageUsecase           *usecase.MessageUsecase
+	contactUsecase           *usecase.ContactUsecase
+	chatUsecase              *usecase.ChatUsecase
+	accountDailyStatsUsecase *usecase.AccountDailyStatsUsecase
+	alertUsecase             *usecase.AlertUsecase
+	companyUsecase           *usecase.CompanyUsecase
+	summaryUsecase           *usecase.ChatSummaryUsecase
+	userUsecase              *usecase.UserUsecase
+	demoAlerts               *demoAlertStore
 }
 
 func New(
@@ -25,15 +35,28 @@ func New(
 	messageUsecase *usecase.MessageUsecase,
 	contactUsecase *usecase.ContactUsecase,
 	chatUsecase *usecase.ChatUsecase,
+	accountDailyStatsUsecase *usecase.AccountDailyStatsUsecase,
+	alertUsecase *usecase.AlertUsecase,
+	companyUsecase *usecase.CompanyUsecase,
+	summaryUsecase *usecase.ChatSummaryUsecase,
+	userUsecase *usecase.UserUsecase,
 ) *Handler {
 	return &Handler{
-		accountUsecase:  accountUsecase,
-		employeeUsecase: employeeUsecase,
-		messageUsecase:  messageUsecase,
-		contactUsecase:  contactUsecase,
-		chatUsecase:     chatUsecase,
+		accountUsecase:           accountUsecase,
+		employeeUsecase:          employeeUsecase,
+		messageUsecase:           messageUsecase,
+		contactUsecase:           contactUsecase,
+		chatUsecase:              chatUsecase,
+		accountDailyStatsUsecase: accountDailyStatsUsecase,
+		alertUsecase:             alertUsecase,
+		companyUsecase:           companyUsecase,
+		summaryUsecase:           summaryUsecase,
+		userUsecase:              userUsecase,
+		demoAlerts:               newDemoAlertStore(),
 	}
 }
+
+var mockMu sync.RWMutex
 
 var mockAccounts = []domain.Account{
 	{ID: 1, CompanyID: 1, EmployeeID: 1, Phone: "+79991112233", Username: "@sales_anna", EmployeeName: "Анна", Status: domain.StatusActive, CreatedAt: time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)},
@@ -92,15 +115,78 @@ var mockChats = []domain.Chat{
 	},
 }
 
+var mockDashboard = domain.DashboardStats{
+	MessagesIn:      1420,
+	MessagesOut:     1180,
+	ActiveChats:     85,
+	NewContacts:     34,
+	AvgResponseTime: 4 * time.Minute,
+	UnansweredChats: 3,
+}
+
+var mockAccountRatings = []domain.AccountRating{
+	{
+		AccountID:       1,
+		Username:        "@sales_anna",
+		EmployeeName:    "Анна",
+		MessagesIn:      850,
+		MessagesOut:     720,
+		TotalMessages:   1570,
+		ActiveChats:     52,
+		NewContacts:     21,
+		AvgResponseTime: 3 * time.Minute,
+	},
+	{
+		AccountID:       2,
+		Username:        "@support_oleg",
+		EmployeeName:    "Олег",
+		MessagesIn:      570,
+		MessagesOut:     460,
+		TotalMessages:   1030,
+		ActiveChats:     33,
+		NewContacts:     13,
+		AvgResponseTime: 5 * time.Minute,
+	},
+}
+
 type createAccountRequest struct {
-	Phone        string `json:"phone" binding:"required"`
-	Username     string `json:"username" binding:"required"`
-	EmployeeName string `json:"employee_name" binding:"required"`
+	CompanyID  int64  `json:"company_id"`
+	EmployeeID int64  `json:"employee_id"`
+	Phone      string `json:"phone" binding:"required"`
+	Username   string `json:"username"`
+}
+
+type assignAccountEmployeeRequest struct {
+	EmployeeID int64 `json:"employee_id" binding:"required"`
 }
 
 type createEmployeeRequest struct {
-	Name     string `json:"name" binding:"required"`
-	Position string `json:"position"`
+	CompanyID int64  `json:"company_id"`
+	Name      string `json:"name" binding:"required"`
+	Position  string `json:"position"`
+}
+
+type createCompanyRequest struct {
+	Name             string `json:"name" binding:"required"`
+	Timezone         string `json:"timezone"`
+	NoReplyThreshold int64  `json:"no_reply_threshold"`
+}
+
+type createUserRequest struct {
+	CompanyID    int64           `json:"company_id"`
+	Email        string          `json:"email" binding:"required"`
+	PasswordHash string          `json:"password_hash" binding:"required"`
+	Role         domain.UserRole `json:"role"`
+	EmployeeID   *int64          `json:"employee_id"`
+}
+
+type upsertChatSummaryRequest struct {
+	Topic         string           `json:"topic"`
+	Agreements    string           `json:"agreements"`
+	NextStep      string           `json:"next_step"`
+	OpenQuestions string           `json:"open_questions"`
+	Risk          domain.RiskLevel `json:"risk"`
+	LastMessageID int64            `json:"last_message_id"`
 }
 
 type updateEmployeeRequest struct {
@@ -112,7 +198,7 @@ type updateChatStatusRequest struct {
 	Status domain.ChatStatus `json:"status" binding:"required"`
 }
 
-func (h *Handler) Run(addr string) error {
+func (h *Handler) InitRoutes() *gin.Engine {
 	r := gin.Default()
 	r.GET("/health", h.Health)
 
@@ -120,70 +206,157 @@ func (h *Handler) Run(addr string) error {
 	r.GET("/accounts", h.List)
 	r.GET("/accounts/:id", h.GetByID)
 	r.POST("/accounts", h.Create)
+	r.POST("/accounts/:id/assign", h.AssignEmployee)
 
 	// Employees
 	r.GET("/employees", h.ListEmployees)
 	r.GET("/employees/:id", h.GetEmployeeByID)
 	r.POST("/employees", h.CreateEmployee)
-	r.POST("/employees/:id", h.UpdateEmployee)
+	r.PUT("/employees/:id", h.UpdateEmployee)
+	r.PATCH("/employees/:id", h.UpdateEmployee)
 	r.POST("/employees/:id/deactivate", h.DeactivateEmployee)
+
+	// Companies
+	r.GET("/companies/:id", h.GetCompanyByID)
+	r.POST("/companies", h.CreateCompany)
+
+	// Users
+	r.GET("/users", h.ListUsers)
+	r.GET("/users/:id", h.GetUserByID)
+	r.POST("/users", h.CreateUser)
 
 	// Chats
 	r.GET("/chats", h.ListChats)
 	r.GET("/chats/:id", h.GetChatByID)
 	r.POST("/chats/:id/status", h.UpdateChatStatus)
 
+	// Chat Summaries
+	r.GET("/chats/:id/summary", h.GetChatSummary)
+	r.POST("/chats/:id/summary", h.UpsertChatSummary)
+
+	// Contacts
+	r.GET("/contacts", h.ListContacts)
+	r.GET("/contacts/:id", h.GetContactByID)
+
 	// Messages
 	r.GET("/chats/:id/messages", h.ListMessagesByChat)
+	r.GET("/chats/:id/analytics", h.GetChatAnalytics)
 
-	return r.Run(addr)
+	// Analytics
+	r.GET("/analytics/dashboard", h.GetDashboard)
+	r.GET("/analytics/accounts", h.GetAccountRatings)
+
+	// Alerts
+	r.GET("/alerts", h.ListAlerts)
+	r.POST("/alerts/:id/resolve", h.ResolveAlert)
+
+	return r
 }
 
 func (h *Handler) Health(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "ok"})
 }
 
+func parseCompanyID(c *gin.Context) (int64, error) {
+	val := strings.TrimSpace(c.Query("company_id"))
+	if val == "" {
+		return 1, nil
+	}
+	id, err := strconv.ParseInt(val, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("%w: invalid company_id query parameter", domain.ErrValidation)
+	}
+	return id, nil
+}
+
+func handleUsecaseError(c *gin.Context, err error, notFoundMsg string) {
+	if errors.Is(err, domain.ErrValidation) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, domain.ErrForbidden) {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, domain.ErrConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, domain.ErrNotFound) {
+		msg := err.Error()
+		if notFoundMsg != "" {
+			msg = notFoundMsg
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": msg})
+		return
+	}
+	_ = c.Error(err)
+	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+}
+
 // --- Accounts ---
 
 func (h *Handler) List(c *gin.Context) {
-	if h.accountUsecase == nil {
-		c.JSON(200, mockAccounts)
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
 		return
 	}
 
-	accounts, err := h.accountUsecase.List(c.Request.Context(), 1)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+	if h.accountUsecase == nil {
+		mockMu.RLock()
+		accounts := make([]domain.Account, len(mockAccounts))
+		copy(accounts, mockAccounts)
+		mockMu.RUnlock()
+		c.JSON(200, accounts)
 		return
+	}
+
+	accounts, err := h.accountUsecase.List(c.Request.Context(), companyID)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	if accounts == nil {
+		accounts = make([]domain.Account, 0)
 	}
 	c.JSON(200, accounts)
 }
 
 func (h *Handler) GetByID(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "id must be a number"})
+		handleUsecaseError(c, err, "")
 		return
 	}
 
 	if h.accountUsecase == nil {
+		mockMu.RLock()
+		var found *domain.Account
 		for _, a := range mockAccounts {
-			if a.ID == int64(id) {
-				c.JSON(200, a)
-				return
+			if a.ID == id {
+				cp := a
+				found = &cp
+				break
 			}
+		}
+		mockMu.RUnlock()
+		if found != nil {
+			c.JSON(200, *found)
+			return
 		}
 		c.JSON(404, gin.H{"error": "account not found"})
 		return
 	}
 
-	acc, err := h.accountUsecase.GetByID(c.Request.Context(), int64(id))
+	acc, err := h.accountUsecase.GetByID(c.Request.Context(), companyID, id)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			c.JSON(404, gin.H{"error": "account not found"})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "account not found")
 		return
 	}
 	c.JSON(200, acc)
@@ -196,74 +369,162 @@ func (h *Handler) Create(c *gin.Context) {
 		return
 	}
 
-	if h.accountUsecase == nil {
-		acc := domain.Account{
-			ID:           int64(len(mockAccounts) + 1),
-			Phone:        req.Phone,
-			Username:     req.Username,
-			EmployeeName: req.EmployeeName,
-			Status:       domain.StatusActive,
-			CreatedAt:    time.Now(),
+	companyID := req.CompanyID
+	if companyID <= 0 {
+		var err error
+		companyID, err = parseCompanyID(c)
+		if err != nil {
+			handleUsecaseError(c, err, "")
+			return
 		}
+	}
+	employeeID := req.EmployeeID
+	if employeeID <= 0 {
+		employeeID = 1
+	}
+
+	if h.accountUsecase == nil {
+		mockMu.Lock()
+		acc := domain.Account{
+			ID:         int64(len(mockAccounts) + 1),
+			CompanyID:  companyID,
+			EmployeeID: employeeID,
+			Phone:      req.Phone,
+			Username:   req.Username,
+			Status:     domain.StatusConnecting,
+			CreatedAt:  time.Now().UTC(),
+		}
+		mockAccounts = append(mockAccounts, acc)
+		mockMu.Unlock()
 		c.JSON(201, acc)
 		return
 	}
 
 	acc, err := h.accountUsecase.Create(c.Request.Context(), usecase.CreateAccountInput{
-		CompanyID:    1,
-		EmployeeID:   1,
-		Phone:        req.Phone,
-		Username:     req.Username,
-		EmployeeName: req.EmployeeName,
+		CompanyID:  companyID,
+		EmployeeID: employeeID,
+		Phone:      req.Phone,
+		Username:   req.Username,
 	})
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "")
 		return
 	}
 	c.JSON(201, acc)
 }
 
-// --- Employees ---
-
-func (h *Handler) ListEmployees(c *gin.Context) {
-	if h.employeeUsecase == nil {
-		c.JSON(200, mockEmployees)
+func (h *Handler) AssignEmployee(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
 		return
 	}
 
-	employees, err := h.employeeUsecase.List(c.Request.Context(), 1)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+	var req assignAccountEmployeeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
+	}
+	if req.EmployeeID <= 0 {
+		c.JSON(400, gin.H{"error": "employee_id must be a positive number"})
+		return
+	}
+
+	if h.accountUsecase == nil {
+		mockMu.Lock()
+		found := false
+		for i := range mockAccounts {
+			if mockAccounts[i].ID == id {
+				mockAccounts[i].EmployeeID = req.EmployeeID
+				found = true
+				break
+			}
+		}
+		mockMu.Unlock()
+		if !found {
+			c.JSON(404, gin.H{"error": "account not found"})
+			return
+		}
+		c.JSON(200, gin.H{"status": "assigned"})
+		return
+	}
+
+	err = h.accountUsecase.AssignEmployee(c.Request.Context(), companyID, id, req.EmployeeID)
+	if err != nil {
+		handleUsecaseError(c, err, "account not found")
+		return
+	}
+	c.JSON(200, gin.H{"status": "assigned"})
+}
+
+// --- Employees ---
+
+func (h *Handler) ListEmployees(c *gin.Context) {
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.employeeUsecase == nil {
+		mockMu.RLock()
+		employees := make([]domain.Employee, len(mockEmployees))
+		copy(employees, mockEmployees)
+		mockMu.RUnlock()
+		c.JSON(200, employees)
+		return
+	}
+
+	employees, err := h.employeeUsecase.List(c.Request.Context(), companyID)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	if employees == nil {
+		employees = make([]domain.Employee, 0)
 	}
 	c.JSON(200, employees)
 }
 
 func (h *Handler) GetEmployeeByID(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "id must be a number"})
+		handleUsecaseError(c, err, "")
 		return
 	}
 
 	if h.employeeUsecase == nil {
+		mockMu.RLock()
+		var found *domain.Employee
 		for _, e := range mockEmployees {
-			if e.ID == int64(id) {
-				c.JSON(200, e)
-				return
+			if e.ID == id {
+				cp := e
+				found = &cp
+				break
 			}
+		}
+		mockMu.RUnlock()
+		if found != nil {
+			c.JSON(200, *found)
+			return
 		}
 		c.JSON(404, gin.H{"error": "employee not found"})
 		return
 	}
 
-	emp, err := h.employeeUsecase.GetByID(c.Request.Context(), int64(id))
+	emp, err := h.employeeUsecase.GetByID(c.Request.Context(), companyID, id)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			c.JSON(404, gin.H{"error": "employee not found"})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "employee not found")
 		return
 	}
 	c.JSON(200, emp)
@@ -276,34 +537,52 @@ func (h *Handler) CreateEmployee(c *gin.Context) {
 		return
 	}
 
+	companyID := req.CompanyID
+	if companyID <= 0 {
+		var err error
+		companyID, err = parseCompanyID(c)
+		if err != nil {
+			handleUsecaseError(c, err, "")
+			return
+		}
+	}
+
 	if h.employeeUsecase == nil {
+		mockMu.Lock()
 		emp := domain.Employee{
 			ID:        int64(len(mockEmployees) + 1),
-			CompanyID: 1,
+			CompanyID: companyID,
 			Name:      req.Name,
 			Position:  req.Position,
 			IsActive:  true,
 		}
+		mockEmployees = append(mockEmployees, emp)
+		mockMu.Unlock()
 		c.JSON(201, emp)
 		return
 	}
 
 	emp, err := h.employeeUsecase.Create(c.Request.Context(), usecase.CreateEmployeeInput{
-		CompanyID: 1,
+		CompanyID: companyID,
 		Name:      req.Name,
 		Position:  req.Position,
 	})
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "")
 		return
 	}
 	c.JSON(201, emp)
 }
 
 func (h *Handler) UpdateEmployee(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "id must be a number"})
+		handleUsecaseError(c, err, "")
 		return
 	}
 
@@ -314,46 +593,72 @@ func (h *Handler) UpdateEmployee(c *gin.Context) {
 	}
 
 	if h.employeeUsecase == nil {
+		mockMu.Lock()
+		found := false
+		for i := range mockEmployees {
+			if mockEmployees[i].ID == id {
+				mockEmployees[i].Name = req.Name
+				mockEmployees[i].Position = req.Position
+				found = true
+				break
+			}
+		}
+		mockMu.Unlock()
+		if !found {
+			c.JSON(404, gin.H{"error": "employee not found"})
+			return
+		}
 		c.JSON(200, gin.H{"status": "updated"})
 		return
 	}
 
 	err = h.employeeUsecase.Update(c.Request.Context(), domain.Employee{
-		ID:        int64(id),
-		CompanyID: 1,
+		ID:        id,
+		CompanyID: companyID,
 		Name:      req.Name,
 		Position:  req.Position,
 	})
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			c.JSON(404, gin.H{"error": "employee not found"})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "employee not found")
 		return
 	}
 	c.JSON(200, gin.H{"status": "updated"})
 }
 
 func (h *Handler) DeactivateEmployee(c *gin.Context) {
-	id, err := strconv.Atoi(c.Param("id"))
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
 	if err != nil {
-		c.JSON(400, gin.H{"error": "id must be a number"})
+		handleUsecaseError(c, err, "")
 		return
 	}
 
 	if h.employeeUsecase == nil {
+		mockMu.Lock()
+		found := false
+		for i := range mockEmployees {
+			if mockEmployees[i].ID == id {
+				mockEmployees[i].IsActive = false
+				found = true
+				break
+			}
+		}
+		mockMu.Unlock()
+		if !found {
+			c.JSON(404, gin.H{"error": "employee not found"})
+			return
+		}
 		c.JSON(200, gin.H{"status": "deactivated"})
 		return
 	}
 
-	err = h.employeeUsecase.Deactivate(c.Request.Context(), int64(id))
+	err = h.employeeUsecase.Deactivate(c.Request.Context(), companyID, id)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			c.JSON(404, gin.H{"error": "employee not found"})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "employee not found")
 		return
 	}
 	c.JSON(200, gin.H{"status": "deactivated"})
@@ -362,6 +667,12 @@ func (h *Handler) DeactivateEmployee(c *gin.Context) {
 // --- Chats ---
 
 func (h *Handler) ListChats(c *gin.Context) {
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
 	var status *domain.ChatStatus
 	if s := c.Query("status"); s != "" {
 		st := domain.ChatStatus(s)
@@ -391,6 +702,7 @@ func (h *Handler) ListChats(c *gin.Context) {
 	}
 
 	if h.chatUsecase == nil {
+		mockMu.RLock()
 		res := make([]domain.Chat, 0)
 		for _, chat := range mockChats {
 			if status != nil && chat.Status != *status {
@@ -410,6 +722,7 @@ func (h *Handler) ListChats(c *gin.Context) {
 			}
 			res = append(res, chat)
 		}
+		mockMu.RUnlock()
 
 		sort.Slice(res, func(i, j int) bool {
 			if res[i].LastMessageAt.Equal(res[j].LastMessageAt) {
@@ -422,13 +735,9 @@ func (h *Handler) ListChats(c *gin.Context) {
 		return
 	}
 
-	chats, err := h.chatUsecase.ListByCompany(c.Request.Context(), 1, status, employeeID)
+	chats, err := h.chatUsecase.ListByCompany(c.Request.Context(), companyID, status, employeeID)
 	if err != nil {
-		if errors.Is(err, domain.ErrValidation) {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "")
 		return
 	}
 	if chats == nil {
@@ -443,38 +752,57 @@ func (h *Handler) GetChatByID(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "id must be a positive number"})
 		return
 	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
 
 	if h.chatUsecase == nil {
+		mockMu.RLock()
+		var found *usecase.ChatDetails
 		for _, chat := range mockChats {
 			if chat.ID == id {
-				c.JSON(200, chat)
-				return
+				details := &usecase.ChatDetails{
+					Chat: chat,
+				}
+				for _, contact := range mockContacts {
+					if contact.ID == chat.ContactID {
+						contactCopy := contact
+						details.Contact = &contactCopy
+						break
+					}
+				}
+				found = details
+				break
 			}
+		}
+		mockMu.RUnlock()
+		if found != nil {
+			c.JSON(200, found)
+			return
 		}
 		c.JSON(404, gin.H{"error": "chat not found"})
 		return
 	}
 
-	chat, err := h.chatUsecase.GetByID(c.Request.Context(), id)
+	details, err := h.chatUsecase.GetDetails(c.Request.Context(), companyID, id)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			c.JSON(404, gin.H{"error": "chat not found"})
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "chat not found")
 		return
 	}
-	c.JSON(200, chat)
+	c.JSON(200, details)
 }
 
 func (h *Handler) UpdateChatStatus(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
 		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
 		return
 	}
 
@@ -498,6 +826,7 @@ func (h *Handler) UpdateChatStatus(c *gin.Context) {
 			return
 		}
 
+		mockMu.Lock()
 		found := false
 		for i := range mockChats {
 			if mockChats[i].ID == id {
@@ -507,6 +836,7 @@ func (h *Handler) UpdateChatStatus(c *gin.Context) {
 				break
 			}
 		}
+		mockMu.Unlock()
 		if !found {
 			c.JSON(404, gin.H{"error": "chat not found"})
 			return
@@ -515,20 +845,80 @@ func (h *Handler) UpdateChatStatus(c *gin.Context) {
 		return
 	}
 
-	err = h.chatUsecase.SetManualStatus(c.Request.Context(), id, req.Status)
+	err = h.chatUsecase.SetManualStatus(c.Request.Context(), companyID, id, req.Status)
 	if err != nil {
-		if errors.Is(err, domain.ErrNotFound) {
-			c.JSON(404, gin.H{"error": "chat not found"})
-			return
-		}
-		if errors.Is(err, domain.ErrValidation) {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "chat not found")
 		return
 	}
 	c.JSON(200, gin.H{"status": "updated"})
+}
+
+// --- Contacts ---
+
+func (h *Handler) ListContacts(c *gin.Context) {
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.contactUsecase == nil {
+		mockMu.RLock()
+		contacts := make([]domain.Contact, len(mockContacts))
+		copy(contacts, mockContacts)
+		mockMu.RUnlock()
+		c.JSON(200, contacts)
+		return
+	}
+
+	contacts, err := h.contactUsecase.ListByCompany(c.Request.Context(), companyID)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	if contacts == nil {
+		contacts = make([]domain.Contact, 0)
+	}
+	c.JSON(200, contacts)
+}
+
+func (h *Handler) GetContactByID(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.contactUsecase == nil {
+		mockMu.RLock()
+		var found *domain.Contact
+		for _, contact := range mockContacts {
+			if contact.ID == id {
+				cp := contact
+				found = &cp
+				break
+			}
+		}
+		mockMu.RUnlock()
+		if found != nil {
+			c.JSON(200, *found)
+			return
+		}
+		c.JSON(404, gin.H{"error": "contact not found"})
+		return
+	}
+
+	contact, err := h.contactUsecase.GetByID(c.Request.Context(), companyID, id)
+	if err != nil {
+		handleUsecaseError(c, err, "contact not found")
+		return
+	}
+	c.JSON(200, contact)
 }
 
 // --- Messages ---
@@ -539,12 +929,17 @@ func (h *Handler) ListMessagesByChat(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "id must be a positive number"})
 		return
 	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
 
 	limit := 50
 	if l := c.Query("limit"); l != "" {
 		parsedLimit, err := strconv.Atoi(l)
-		if err != nil || parsedLimit <= 0 {
-			c.JSON(400, gin.H{"error": "limit must be a positive number"})
+		if err != nil || parsedLimit <= 0 || parsedLimit > 100 {
+			c.JSON(400, gin.H{"error": "limit must be between 1 and 100"})
 			return
 		}
 		limit = parsedLimit
@@ -561,24 +956,327 @@ func (h *Handler) ListMessagesByChat(c *gin.Context) {
 	}
 
 	if h.messageUsecase == nil {
+		mockMu.RLock()
 		res := make([]domain.Message, 0)
 		for _, m := range mockMessages {
 			if m.ChatID == chatID {
 				res = append(res, m)
 			}
 		}
+		mockMu.RUnlock()
 		c.JSON(200, res)
 		return
 	}
 
-	messages, err := h.messageUsecase.ListByChat(c.Request.Context(), chatID, limit, offset)
+	messages, err := h.messageUsecase.ListByChat(c.Request.Context(), companyID, chatID, limit, offset)
 	if err != nil {
-		if errors.Is(err, domain.ErrValidation) {
-			c.JSON(400, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(500, gin.H{"error": err.Error()})
+		handleUsecaseError(c, err, "")
 		return
 	}
+	if messages == nil {
+		messages = make([]domain.Message, 0)
+	}
 	c.JSON(200, messages)
+}
+
+// --- Analytics ---
+
+func parseDateRange(fromStr, toStr string) (time.Time, time.Time, error) {
+	var from, to time.Time
+	var err error
+
+	if toStr != "" {
+		to, err = time.Parse("2006-01-02", toStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, errors.New("to must be in format YYYY-MM-DD")
+		}
+	} else {
+		now := time.Now().UTC()
+		to = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	}
+
+	if fromStr != "" {
+		from, err = time.Parse("2006-01-02", fromStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, errors.New("from must be in format YYYY-MM-DD")
+		}
+	} else {
+		from = to.AddDate(0, 0, -30)
+	}
+
+	if from.After(to) {
+		return time.Time{}, time.Time{}, errors.New("from date must not be after to date")
+	}
+
+	return from, to, nil
+}
+
+func (h *Handler) GetDashboard(c *gin.Context) {
+	from, to, err := parseDateRange(c.Query("from"), c.Query("to"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.accountDailyStatsUsecase == nil {
+		mockMu.RLock()
+		stats := mockDashboard
+		mockMu.RUnlock()
+		c.JSON(200, stats)
+		return
+	}
+
+	stats, err := h.accountDailyStatsUsecase.GetDashboard(c.Request.Context(), companyID, from, to)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	c.JSON(200, stats)
+}
+
+func (h *Handler) GetAccountRatings(c *gin.Context) {
+	from, to, err := parseDateRange(c.Query("from"), c.Query("to"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.accountDailyStatsUsecase == nil {
+		mockMu.RLock()
+		ratings := make([]domain.AccountRating, len(mockAccountRatings))
+		copy(ratings, mockAccountRatings)
+		mockMu.RUnlock()
+		c.JSON(200, ratings)
+		return
+	}
+
+	ratings, err := h.accountDailyStatsUsecase.GetAccountRatings(c.Request.Context(), companyID, from, to)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	if ratings == nil {
+		ratings = make([]domain.AccountRating, 0)
+	}
+	c.JSON(200, ratings)
+}
+
+// --- Companies ---
+
+func (h *Handler) CreateCompany(c *gin.Context) {
+	var req createCompanyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.NoReplyThreshold < 0 {
+		c.JSON(400, gin.H{"error": "no_reply_threshold cannot be negative"})
+		return
+	}
+
+	if h.companyUsecase == nil {
+		c.JSON(500, gin.H{"error": "company service unavailable"})
+		return
+	}
+
+	id, err := h.companyUsecase.Create(c.Request.Context(), domain.Company{
+		Name:             req.Name,
+		Timezone:         req.Timezone,
+		NoReplyThreshold: time.Duration(req.NoReplyThreshold),
+	})
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	c.JSON(201, gin.H{"id": id, "name": req.Name})
+}
+
+func (h *Handler) GetCompanyByID(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+
+	if h.companyUsecase == nil {
+		c.JSON(500, gin.H{"error": "company service unavailable"})
+		return
+	}
+
+	comp, err := h.companyUsecase.GetByID(c.Request.Context(), id)
+	if err != nil {
+		handleUsecaseError(c, err, "company not found")
+		return
+	}
+	c.JSON(200, comp)
+}
+
+// --- Chat Summaries ---
+
+func (h *Handler) GetChatSummary(c *gin.Context) {
+	chatID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || chatID <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.summaryUsecase == nil {
+		c.JSON(500, gin.H{"error": "summary service unavailable"})
+		return
+	}
+
+	summary, err := h.summaryUsecase.GetByChatID(c.Request.Context(), companyID, chatID)
+	if err != nil {
+		handleUsecaseError(c, err, "summary not found")
+		return
+	}
+	c.JSON(200, summary)
+}
+
+func (h *Handler) UpsertChatSummary(c *gin.Context) {
+	chatID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || chatID <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	var req upsertChatSummaryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if h.summaryUsecase == nil {
+		c.JSON(500, gin.H{"error": "summary service unavailable"})
+		return
+	}
+
+	summary := domain.ChatSummary{
+		ChatID:        chatID,
+		Topic:         req.Topic,
+		Agreements:    req.Agreements,
+		NextStep:      req.NextStep,
+		OpenQuestions: req.OpenQuestions,
+		Risk:          req.Risk,
+		LastMessageID: req.LastMessageID,
+		GeneratedAt:   time.Now().UTC(),
+	}
+
+	if err := h.summaryUsecase.Upsert(c.Request.Context(), companyID, summary); err != nil {
+		handleUsecaseError(c, err, "chat not found")
+		return
+	}
+	c.JSON(200, gin.H{"status": "saved"})
+}
+
+// --- Users ---
+
+func (h *Handler) ListUsers(c *gin.Context) {
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.userUsecase == nil {
+		c.JSON(500, gin.H{"error": "user service unavailable"})
+		return
+	}
+
+	users, err := h.userUsecase.ListByCompany(c.Request.Context(), companyID)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	if users == nil {
+		users = make([]domain.User, 0)
+	}
+	c.JSON(200, users)
+}
+
+func (h *Handler) GetUserByID(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(400, gin.H{"error": "id must be a positive number"})
+		return
+	}
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.userUsecase == nil {
+		c.JSON(500, gin.H{"error": "user service unavailable"})
+		return
+	}
+
+	user, err := h.userUsecase.GetByID(c.Request.Context(), companyID, id)
+	if err != nil {
+		handleUsecaseError(c, err, "user not found")
+		return
+	}
+	c.JSON(200, user)
+}
+
+func (h *Handler) CreateUser(c *gin.Context) {
+	var req createUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	companyID := req.CompanyID
+	if companyID <= 0 {
+		var err error
+		companyID, err = parseCompanyID(c)
+		if err != nil {
+			handleUsecaseError(c, err, "")
+			return
+		}
+	}
+
+	if h.userUsecase == nil {
+		c.JSON(500, gin.H{"error": "user service unavailable"})
+		return
+	}
+
+	user := domain.User{
+		CompanyID:    companyID,
+		Email:        req.Email,
+		PasswordHash: req.PasswordHash,
+		Role:         req.Role,
+		EmployeeID:   req.EmployeeID,
+		CreatedAt:    time.Now().UTC(),
+	}
+
+	id, err := h.userUsecase.Create(c.Request.Context(), user)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+	c.JSON(201, gin.H{"id": id, "email": user.Email})
 }
