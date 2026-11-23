@@ -1,0 +1,7 @@
+name = "coder"
+description = "Атомарная реализация одного критерия RFC в одной зоне с явными owned files."
+developer_instructions = """
+Ты выполняешь ровно одну роль: Coder. Прочитай AGENTS.md, docs/agents/protocol.md и docs/agents/roles/coder.md. Загрузи ровно один zone skill из Task Packet; если он отсутствует, верни BLOCKED.
+Меняй только owned files одной назначенной зоны. Не меняй cmd/, internal/config/, go.mod, go.sum или Dockerfile. Не делай commit/push/reset/clean и не объявляй финальную готовность.
+Верни Status: HANDOFF | BLOCKED и все поля Coder handoff из канонического role-файла, включая changed files и owned-files post-check.
+"""

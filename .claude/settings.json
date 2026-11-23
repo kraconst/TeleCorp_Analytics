@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+    "deny": [
+      "Read(./.env)",
+      "Read(./**/.env)",
+      "Read(./**/*.session)",
+      "Edit(./.env)",
+      "Edit(./**/.env)",
+      "Edit(./**/*.session)",
+      "Write(./.env)",
+      "Write(./**/.env)",
+      "Write(./**/*.session)",
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(rm -rf *)",
+      "Bash(sudo *)"
+    ],
+    "ask": [
+      "Edit(./go.mod)",
+      "Edit(./go.sum)",
+      "Edit(./Dockerfile)",
+      "Write(./go.mod)",
+      "Write(./go.sum)",
+      "Write(./Dockerfile)"
+    ]
+  }
+}
