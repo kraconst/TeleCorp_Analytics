@@ -1,0 +1,433 @@
+# RFC 02: AI-саммари, автостатусы и алерты, поиск и фильтры чатов
+
+- **Status:** Draft
+- **Date:** 2026-11-24
+- **Owner:** Группа 2 (треки 2A, 2B, 2C)
+- **Источники требований:** `docs/group2_ai_and_product.md` (треки и Definition of Done), стык с Группой 1 — `docs/group1_telegram_sync.md`.
+- **Готовность к pipeline:** трек 2A — вопросы закрыты (п. 3 «Принятые решения трека 2A»), pipeline по `2A-*` можно запускать. Треки 2B и 2C — до старта Coder участники закрывают свои вопросы из п. 3 «Открытые вопросы». Каждый участник запускает feature-pipeline только по критериям своего трека (`2A-*`, `2B-*`, `2C-*`).
+
+## 1. Фича
+
+Руководитель получает автоматическую выжимку каждого диалога (тема, договорённости, следующий шаг, открытые вопросы, риск), автоматические статусы диалогов и сигналы о проблемах (жалоба, отказ, негатив, срочность, долгое молчание менеджера). Ручной выбор руководителя автоматика не перезаписывает. Список диалогов можно искать по имени клиента и тексту переписки, фильтровать, сортировать и листать страницами, чтобы проблемные диалоги находились за секунды.
+
+## 2. Бизнес-требования
+
+- **Пользовательские сценарии:**
+  - *2A.* Руководитель открывает диалог и запрашивает свежую выжимку; если новых сообщений не было, получает сохранённую без повторной траты токенов, а при необходимости принудительно пересчитывает. После синхронизации Telegram (Группа 1) выжимка пересчитывается в фоне и не замедляет синхронизацию.
+  - *2B.* По результату AI-анализа диалог автоматически получает статус и сигналы (жалоба, отказ, негатив, срочность). Диалог, в котором клиент ждёт ответа дольше порога компании, получает сигнал «нет ответа». Руководитель вручную закрывает сигналы.
+  - *2C.* Руководитель ищет диалоги по имени/username клиента и тексту переписки, отбирает неотвеченные, по приоритету, аккаунту, статусу и сотруднику, сортирует по свежести или по длительности ожидания и листает постранично.
+- **Роли и права:** ролей и авторизации в этой работе нет. Компания определяется в handler через `parseCompanyID` (query `company_id`, по умолчанию 1). Это известное ограничение, а не изоляция: значение задаёт клиент. Все операции ограничены компанией; чат или аккаунт чужой компании для пользователя не существует.
+- **Разрешённые и запрещённые действия:**
+  - Автоматика меняет только `status`, и только у чата с `status_source = 'auto'`. Ручной статус (`manual`) и `priority` автоматика не трогает никогда.
+  - Без новых сообщений и без `force` модель не вызывается.
+  - Без AI-ключа сервер работает штатно: отключена только AI-генерация.
+  - Сигнал «нет ответа» модель не ставит. Его создаёт только фоновая проверка по порогу компании.
+  - Активный сигнал одного типа на один диалог существует не более чем в одном экземпляре. Автоматика сигналы не закрывает, закрывает только руководитель.
+  - Номера телефонов во внешний AI-сервис не передаются.
+  - При ошибке AI в БД не сохраняется частичный или невалидный результат.
+- **Граничные случаи:**
+  - Чат без сообщений: генерация невозможна (ошибка валидации).
+  - Чат не существует или принадлежит другой компании: «не найден», модель не вызывается.
+  - AI-сервис отключён, перегружен (429), недоступен по сети или не ответил вовремя: «сервис недоступен», сохранённая выжимка не меняется.
+  - Ответ модели невалиден (не JSON, нарушена схема, недопустимый уровень риска): «ошибка внешнего сервиса», ничего не сохраняется.
+  - Модель вернула недопустимый тип сигнала (неизвестный или `no_reply`) или недопустимый статус: значение отбрасывается с записью в лог (статус в этом случае не меняется), остальной результат принимается.
+  - Правило разбора: необязательное значение можно отбросить, обязательное (уровень риска) нельзя подменять значением по умолчанию.
+  - Выжимка сохранена, но автостатус или сигналы применить не удалось: выжимка остаётся, ошибка логируется. Частичный успех маркируется только в логе, ответ пользователю — успешный (Q11).
+  - Повторный AI-анализ и повторный запуск проверки «нет ответа» не создают дублей активных сигналов.
+  - Очередь фонового пересчёта переполнена: задача отбрасывается с записью в лог, синхронизация не блокируется.
+  - Пока Группа 1 не заполняет `awaiting_reply_since`, проверка «нет ответа» и фильтр «неотвеченные» ничего не находят, и это не ошибка.
+  - Фильтр по аккаунту чужой компании даёт пустой список, а не отказ в доступе.
+- **Non-goals:**
+  - `internal/telegram/` и `internal/usecase/sync.go` — зона Группы 1.
+  - Авторизация и роли: захардкоженный в handlers `company_id = 1` остаётся известным ограничением, это не изоляция. Права на `force=true` не вводятся (D11).
+  - Изменения `go.mod`, `go.sum`, `Dockerfile`, Docker-окружения и расширений PostgreSQL.
+  - Автоматическое изменение `priority`.
+  - Автоматическое снятие алертов.
+  - Рабочие часы и таймзоны в расчёте `no_reply`.
+  - Полнотекстовый и триграммный поиск (новые индексы под поиск).
+
+### Наблюдаемые критерии приёмки
+
+**Трек 2A — AI-саммари**
+
+- **2A-1.** Без `AI_API_KEY` сервер стартует, пишет в лог «AI отключён», а `POST /chats/:id/summary/generate` для существующего чата компании отвечает `503` и не обращается к внешнему API.
+- **2A-2.** Повторный `generate` без `force`, когда ID последнего сообщения чата равен `chat_summaries.last_message_id`, отвечает `200` с сохранённым саммари. HTTP-запросов к LLM ноль (проверяется счётчиком `httptest.Server` или мок-summarizer).
+- **2A-3.** `generate?force=true` вызывает LLM даже при совпадении `last_message_id` и сохраняет новый результат.
+- **2A-4.** При новых сообщениях LLM вызывается один раз. Саммари сохраняется с `last_message_id` = ID последнего сообщения и `generated_at` в UTC. Ответ `200` содержит сохранённое саммари.
+- **2A-5.** Несуществующий чат и чат чужой компании → `404`, LLM не вызывается.
+- **2A-6.** Чат без сообщений → `400`, LLM не вызывается.
+- **2A-7.** Невалидный `:id` (не число, ≤ 0) или невалидный `force` → `400`.
+- **2A-8.** Ответ LLM `429`, сетевая ошибка или таймаут → `503`. Неразбираемый JSON, отсутствие или нестроковый тип любого из ключей `topic`/`agreements`/`next_step`/`open_questions`/`risk`, а также недопустимое после нормализации значение `risk` → `502`. Значение `risk` по умолчанию не подставляется. В обоих случаях запись в `chat_summaries` не меняется. Пустые строки в текстовых полях допустимы.
+- **2A-8a.** Все перечисляемые значения (`risk`, `suggested_status`, `alert_types`) сравниваются после `trim` и приведения к нижнему регистру (`"High"` → `high`). Терпимо разбираются необязательные поля (Q10):
+  - `alert_types`: неизвестные значения и `no_reply` отбрасываются, дубли схлопываются. Отсутствующий ключ, `null` или не массив строк — пустой список.
+  - `suggested_status`: неизвестное значение, нестроковый тип, отсутствующий ключ или `null` → `nil` (статус не меняется).
+
+  Каждое отброшенное значение пишется в лог (поле и значение, без текста переписки). Остальной результат сохраняется, ответ `200`. Тело ответа — `{"error": "..."}` без содержимого ответа провайдера и без ключа.
+- **2A-9.** Ответ, обёрнутый в ```` ```json … ``` ````, разбирается успешно.
+- **2A-10.** Контекст для LLM: не более `AI_MAX_MESSAGES` последних сообщений в хронологическом порядке, каждое с ролью «Клиент» (`in`) или «Менеджер» (`out`) и временем. Старейшие сообщения отбрасываются, пока сумма символов > `AI_MAX_CHARS`. Одиночное сообщение длиннее лимита обрезается. Телефонные номера заменены на `[телефон]` по правилу Q8. Проверяется по телу запроса, перехваченному `httptest.Server`.
+- **2A-11.** После успешного сохранения вызывается `ChatAnalysisHandler.HandleAnalysis` с `companyID`, `chatID` и результатом анализа. Если обработчик `nil`, генерация работает без него. Ошибка обработчика логируется, сохранённое саммари не откатывается, ответ `200`.
+- **2A-12.** `Enqueue` не блокирует вызывающего: при полном буфере задача отбрасывается с логом, повторный `Enqueue` чата, уже стоящего в очереди, не добавляет вторую задачу. Воркер использует собственный контекст и завершается при отмене контекста `Run(ctx)` без утечки горутин (`go test -race`).
+- **2A-13.** Фоновая генерация делает ровно один повтор только для `429` и сетевых ошибок. Backoff — 2s, либо значение `Retry-After`, если оно есть и не больше 10s. Для таймаута, `502`-класса ошибок, `ErrValidation` и `ErrNotFound` повтора нет (Q7). Синхронная ручка не повторяет.
+- **2A-14.** `GET /chats/:id/summary` и `POST /chats/:id/summary` работают как раньше; существующие тесты зелёные.
+
+**Трек 2B — автостатусы и алерты**
+
+- **2B-1.** Результат анализа с `SuggestedStatus` у чата с `status_source = 'auto'` меняет `status`; `status_source` остаётся `auto`.
+- **2B-2.** После `POST /chats/:id/status` (ручной статус) последующий AI-анализ статус не меняет и не возвращает ошибку. Алерты из того же результата при этом создаются.
+- **2B-3.** `SuggestedStatus = nil` и пустой `AlertTypes` — no-op без ошибки.
+- **2B-4.** Для каждого типа из `AlertTypes` (`complaint`, `refusal`, `negative`, `urgent`) создаётся активный алерт. Повторный анализ с теми же типами не создаёт дублей активных алертов. Дубли внутри одного `AlertTypes` схлопываются.
+- **2B-5.** `alerts.company_id` нового алерта равен компании чата (через `accounts.company_id`), а не значению из входа. Чат чужой компании не получает ни статуса, ни алертов.
+- **2B-6.** Проверка «нет ответа» создаёт алерт `no_reply` для чата, где `awaiting_reply_since + companies.no_reply_threshold < now()`, с порогом своей компании (наносекунды). Для чата с `awaiting_reply_since IS NULL` или в пределах порога алерт не создаётся.
+- **2B-7.** Повторный запуск проверки (и одновременные запуски) не создаёт второго активного `no_reply` для того же чата.
+- **2B-8.** Проверка запускается раз в `NO_REPLY_CHECK_INTERVAL` (default `1m`). Ошибка одной итерации логируется и не останавливает цикл. Отмена контекста завершает цикл без утечки горутин (`go test -race`).
+- **2B-9.** Алерты снимаются только через `POST /alerts/:id/resolve`; автоматика `resolved_at` не выставляет.
+- **2B-10.** Миграция up применяется на БД с уже существующими дублями активных алертов без ошибки и оставляет по одному активному алерту на `(chat_id, type)`. После down + up состояние схемы корректно.
+- **2B-11.** `GET /alerts`, `POST /alerts/:id/resolve` и существующие тесты алертов работают как раньше.
+
+**Трек 2C — поиск и фильтры**
+
+- **2C-1.** `GET /chats` без новых параметров возвращает JSON-массив (`[]`, если пусто), отсортированный по `last_message_at DESC, id DESC`, не более 50 элементов, с заголовком `X-Total-Count`.
+- **2C-2.** `q` (после trim 2–100 символов) находит чаты без учёта регистра по `contacts.name`, `contacts.username` или тексту любого сообщения чата. `%` и `_` в `q` ищутся буквально. `q` короче 2 или длиннее 100 символов после trim → `400`.
+- **2C-3.** `unanswered=true` возвращает только чаты с `awaiting_reply_since IS NOT NULL`.
+- **2C-4.** `priority=low|normal|high` фильтрует по приоритету; иное значение → `400`.
+- **2C-5.** `account_id` (положительное целое) фильтрует по аккаунту; аккаунт чужой компании → `200 []` и `X-Total-Count: 0`; невалидное значение → `400`.
+- **2C-6.** `sort=last_message_at` (default) сортирует по `last_message_at DESC, id DESC`. `sort=awaiting_reply` сортирует по `awaiting_reply_since ASC NULLS LAST, id DESC`. Иное значение → `400`.
+- **2C-7.** `limit` (default 50, 1..200) и `offset` (≥ 0) пагинируют стабильно. Нарушение → `400`. `X-Total-Count` равен числу чатов по фильтрам без учёта `limit/offset`.
+- **2C-8.** `status` и `employee_id` работают как раньше. Все фильтры комбинируются через AND.
+- **2C-9.** Чаты другой компании не попадают в результат и в `X-Total-Count` ни при каком сочетании параметров.
+- **2C-10.** Существующие тесты `internal/handler/handler_test.go` и `internal/handler/chat_adversarial_test.go` зелёные (ожидания не меняются, см. открытый вопрос Q2 о сигнатурах моков).
+
+## 3. Технические требования
+
+- **Идентификаторы и источники:**
+  - `companyID` берётся только из `parseCompanyID` в handler и передаётся явно во все usecase. Из тела запроса или ответа LLM ему не доверяют.
+  - `chatID` берётся из path `:id` (2A) или из `OnChatUpdated` Группы 1 (фон 2A).
+  - `chats` не имеет `company_id`: компания чата = `accounts.company_id` через `chats.account_id`. `ChatStorage.GetByID` ищет по глобальному ID, поэтому проверка компании в usecase обязательна (паттерн существующих `ChatUsecase.GetByID` и `ChatSummaryUsecase.GetByChatID`: chat → account → сравнение `CompanyID`, иначе `ErrNotFound`).
+  - «Последнее сообщение» (D8) — последний элемент выборки последних N сообщений по `sent_at DESC, id DESC`, то есть последнее сообщение того же контекста, что уходит в LLM (Q3 принят).
+- **Company scope (D2):** каждая проверка компании выполняется в usecase и дублируется условием `accounts.company_id = $companyID` в SQL storage:
+  - 2A: новый метод сообщений — `JOIN chats … JOIN accounts … WHERE a.company_id = $`.
+  - 2B: `UpdateAutoStatus` — `UPDATE chats c … FROM accounts a WHERE … a.company_id = $`. Создание алертов берёт `company_id` из `accounts`. Фоновая проверка `no_reply` — системная задача по всем компаниям: `company_id` каждого алерта берётся из `accounts.company_id` чата.
+  - 2C: `WHERE a.company_id = $1` и для подзапроса по `messages`, и для `account_id`.
+- **Затрагиваемые слои и Zone Impact Map:**
+
+  **Трек 2A** — In-Scope Zones (порядок выполнения):
+  1. `zone-domain-migrations` — только `internal/domain/errors.go`: `ErrUnavailable`, `ErrBadGateway`. Миграции не нужны.
+  2. `zone-storage-postgres` — `internal/storage/postgres/message.go`: новый метод последних N сообщений с company scope; интеграционный тест (по паттерну `TEST_POSTGRES_DSN`, иначе SKIPPED).
+  3. `zone-usecase` — `internal/usecase/interfaces.go` (контракты D3 и новый узкий интерфейс сообщений), `internal/usecase/chat_summary.go` (`Generate`, `Enqueue`, `Run`), `internal/usecase/chat_summary_test.go` (новый).
+  4. `zone-integrations` — `internal/ai/` (новый пакет: OpenAI-совместимый клиент на `net/http`, построение контекста, маскирование, разбор и валидация JSON), `internal/ai/*_test.go` на `httptest.Server`.
+  5. `zone-handler-api` — `internal/handler/handler.go`: роут `POST /chats/:id/summary/generate`, маппинг `ErrUnavailable → 503` и `ErrBadGateway → 502` в `handleUsecaseError`; новый тестовый файл handler.
+
+  **Трек 2B** — In-Scope Zones:
+  1. `zone-domain-migrations` — `migrations/00000N_alerts_active_unique.{up,down}.sql` (номер уточняется при мерже, D1). Доменные модели не меняются.
+  2. `zone-storage-postgres` — `internal/storage/postgres/chat.go` (`UpdateAutoStatus`), `internal/storage/postgres/alert.go` (создание с `ON CONFLICT DO NOTHING`, массовое создание `no_reply`), интеграционные тесты.
+  3. `zone-usecase` — `internal/usecase/interfaces.go` (узкие интерфейсы 2B), новый `internal/usecase/chat_analysis.go` (реализация `ChatAnalysisHandler`), `internal/usecase/alert.go` (`CheckNoReplyAlerts`, `RunNoReplyChecker`), тесты `internal/usecase/chat_analysis_test.go`, `internal/usecase/alert_test.go`.
+
+  **Трек 2C** — In-Scope Zones:
+  1. `zone-domain-migrations` — только `internal/domain/chat.go` (расширение `ChatFilter`, константы сортировки). Миграция не нужна (D16).
+  2. `zone-storage-postgres` — `internal/storage/postgres/chat.go` (`ListByCompany(ctx, filter)` + подсчёт total), интеграционный тест.
+  3. `zone-usecase` — `internal/usecase/interfaces.go` (сигнатура `ChatRepository.ListByCompany`), `internal/usecase/chat.go` (валидация фильтра), `internal/usecase/chat_test.go`, `internal/usecase/chat_adversarial_test.go`, `internal/usecase/review_iteration3_test.go` (только сигнатуры моков и вызовов, Q2).
+  4. `zone-handler-api` — `internal/handler/handler.go` (`ListChats`, включая mock-ветку, Q1), `internal/handler/handler_test.go` (только сигнатура `handlerMockChatRepo.ListByCompany`, Q2), новый тестовый файл для фильтров.
+
+  **Out of Scope (Do Not Touch) для всех треков:**
+  - `internal/telegram/` и `internal/usecase/sync.go` (Группа 1).
+  - `go.mod`, `go.sum`, `Dockerfile`, `docker-compose.yml`, расширения PostgreSQL.
+  - Зоны, не названные в треке: 2A не трогает миграции, `chat.go` и `alert.go`; 2B не трогает handler, `internal/ai` и `ListByCompany`; 2C не трогает `internal/ai`, `alert.go` и `UpdateAutoStatus`.
+
+  **Integration blockers (не зоны Coder, выполняет человек):**
+  - `internal/config/config.go`:
+    - секция `AI` для 2A (D10): `AI_API_BASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_TIMEOUT`, `AI_MAX_MESSAGES`, `AI_MAX_CHARS`;
+    - `NO_REPLY_CHECK_INTERVAL` для 2B (D14).
+    - Ошибки разбора duration или int — с явным логом и fallback на default либо отказом старта (решает человек; сейчас `Must()` ошибок не возвращает).
+  - `cmd/app/main.go`:
+    - сборка AI-клиента или его отсутствие без ключа (лог «AI отключён»);
+    - новый конструктор `NewChatSummaryUsecase` (summarizer, сообщения, `ChatAnalysisHandler` из 2B или `nil`, лимиты);
+    - запуск воркеров `ChatSummaryUsecase.Run(ctx)` (2A) и `AlertUsecase.RunNoReplyChecker(ctx, interval)` (2B) на общем контексте, отменяемом по SIGINT/SIGTERM, с ожиданием завершения (WaitGroup) до или после `srv.Shutdown`;
+    - передача `summaryUsecase.Enqueue` как `OnChatUpdated` в `SyncUsecase` Группы 1;
+    - `http.Server.WriteTimeout`: поднять с 15s до `AI_TIMEOUT + 5s` (35s при дефолтах), иначе сервер обрывает синхронный `generate` (Q4 принят).
+- **Зависимости и интерфейсы:**
+  - Направление: `handler → usecase → (storage | ai) → domain`; `internal/ai` импортирует `usecase` (типы D3) и `domain`. `usecase` не импортирует `ai`, Gin и sqlx.
+  - **Контракты D3** фиксирует 2A первым в `internal/usecase/interfaces.go` (см. п. 4).
+  - **Новые методы repository** выносятся в новые узкие интерфейсы, а не добавляются в существующие `MessageRepository`, `ChatRepository`, `AlertRepository`. Иначе ломаются ручные моки в `internal/usecase/*_test.go` и `internal/handler/*_test.go`, которые реализуют эти интерфейсы целиком.
+    - 2A (принято): `RecentMessageRepository { ListLatestByChat(ctx, companyID, chatID int64, limit int) ([]domain.Message, error) }`, реализует `*postgres.MessageStorage`. Существующий `MessageRepository` и его моки не меняются.
+    - 2B (предложение, подтверждает 2B в Q2): `ChatAutoStatusRepository { UpdateAutoStatus(ctx, companyID, chatID int64, status domain.ChatStatus) (bool, error) }` (реализует `*postgres.ChatStorage`) и `AlertDedupRepository { CreateIfNoActive(ctx, companyID, chatID int64, t domain.AlertType, createdAt time.Time) (bool, error); CreateOverdueNoReply(ctx context.Context, now time.Time) (int, error) }` (реализует `*postgres.AlertStorage`).
+    - 2C меняет сигнатуру существующего `ChatRepository.ListByCompany` (D19), поэтому правка моков неизбежна (Q2).
+  - **2A `ChatSummaryUsecase`:** конструктор получает `ChatSummaryRepository`, `ChatRepository`, `AccountRepository`, `RecentMessageRepository`, `ChatSummarizer` (может быть `nil` = AI отключён), `ChatAnalysisHandler` (может быть `nil`), лимит сообщений, размер очереди. Новые методы:
+    - `Generate(ctx, companyID, chatID int64, force bool) (*domain.ChatSummary, error)`;
+    - `Enqueue(ctx, companyID, chatID int64)`;
+    - `Run(ctx context.Context)`.
+  - **Порядок `Generate`:**
+    1. Валидация ID → `ErrValidation`.
+    2. Чат и компания → `ErrNotFound`.
+    3. Summarizer `nil` → `ErrUnavailable` — всегда, даже при актуальном кэше (Q5 принят); сохранённое саммари доступно через `GET /chats/:id/summary`.
+    4. `ListLatestByChat(limit = AI_MAX_MESSAGES)`; пусто → `ErrValidation`.
+    5. `GetByChatID`: при `!force` и `LastMessageID == ID последнего сообщения` — вернуть сохранённое без LLM. `ErrNotFound` здесь означает «саммари ещё нет», это не ошибка.
+    6. `AnalyzeChat(ctx, {Messages, Previous})`.
+    7. Повторная валидация `Risk` в usecase.
+    8. `Upsert` с `LastMessageID` и `GeneratedAt = time.Now().UTC()`.
+    9. `HandleAnalysis`, если обработчик задан: ошибка → лог, не возврат.
+    10. Вернуть сохранённое саммари.
+  - **2A `internal/ai`:**
+    - Тип клиента реализует `usecase.ChatSummarizer`. Конструктор принимает base URL, ключ, модель, таймаут, `MaxChars`.
+    - Запрос: `POST {base}/chat/completions` с `Authorization: Bearer`, `response_format` JSON не обязателен.
+    - Системный промпт требует строгий JSON по схеме `{topic, agreements, next_step, open_questions, risk, suggested_status|null, alert_types[]}`.
+    - Контекст строится по D9; обрезка по символам считается в рунах, не в байтах.
+    - Маскирование телефонов (Q8 принят): последовательность из 10–15 цифр, между которыми допускаются `+`, пробелы, `-`, `(`, `)`, заменяется на `[телефон]` в тексте сообщений до отправки.
+    - Допустимые значения `risk`, `suggested_status`, `alert_types` перечислены в промпте явно. Если провайдер поддерживает structured outputs (`response_format` с JSON Schema и `enum`), клиент может их использовать, но валидация ответа на стороне клиента обязательна всегда: base URL настраивается, и совместимый провайдер может не поддерживать или игнорировать схему.
+    - Разбор ответа (Q10). Необязательное значение можно отбросить; обязательное нельзя подменять значением по умолчанию.
+      - Все перечисления сначала нормализуются (`trim` + нижний регистр), затем сверяются с доменными значениями.
+      - Терпимо: `alert_types` (неизвестные значения и `no_reply` отбрасываются, дубли схлопываются) и `suggested_status` (недопустимое значение → `nil`, статус не меняется).
+      - Строго (`ErrBadGateway`): битый JSON, отсутствующие или нестроковые текстовые ключи и `risk`, недопустимый после нормализации `risk`. Подстановка `low` запрещена: она молча занизила бы риск.
+      - Каждое отброшенное значение логируется (поле + значение, без текста переписки), чтобы деградацию промпта или модели было видно.
+    - `Previous` передаётся как предыдущая выжимка (контекст для модели).
+    - Ключ и тело ответа провайдера не логируются и не попадают в ошибки.
+  - **2B `ChatAnalysisUsecase`** реализует `ChatAnalysisHandler.HandleAnalysis`:
+    1. Проверяет компанию чата (usecase).
+    2. Если `SuggestedStatus != nil` и он валиден → `UpdateAutoStatus`; `false` без ошибки — норма (manual).
+    3. Для уникальных `AlertTypes` из `{complaint, refusal, negative, urgent}` → `CreateIfNoActive`.
+    4. Ошибки агрегируются (`errors.Join`) и возвращаются вызывающему, который их логирует.
+  - **2B `AlertUsecase`:**
+    - `CheckNoReplyAlerts(ctx) (int, error)` — один SQL-оператор создания просроченных `no_reply`;
+    - `RunNoReplyChecker(ctx, interval)` — `time.Ticker`, выход по `ctx.Done()`, ошибка итерации логируется.
+    - Существующий `AlertUsecase.Create` не меняется.
+  - **2C:**
+    - `domain.ChatFilter` расширяется полями `AccountID *int64`, `Priority *ChatPriority`, `UnansweredOnly bool`, `Query string`, `Sort ChatSort`, `Limit int`, `Offset int` (+ существующие `CompanyID`, `EmployeeID`, `Status`).
+    - Новый тип `ChatSort` с константами `ChatSortLastMessageAt = "last_message_at"` и `ChatSortAwaitingReply = "awaiting_reply"`.
+    - `ChatRepository.ListByCompany(ctx, filter domain.ChatFilter)` — форма возврата total в Q6.
+    - `ChatUsecase` валидирует фильтр и применяет defaults (`Limit = 50`, `Sort = last_message_at`). Handler разбирает query и мапит ошибки разбора в `ErrValidation`.
+- **Ошибки (D5, D7):**
+  - `ErrValidation` → 400: невалидные ID и параметры, чат без сообщений, нарушение ограничений `q`, `limit`, `offset`, `sort`, `priority`.
+  - `ErrNotFound` → 404: чат не найден или чужой компании.
+  - `ErrForbidden` / `ErrConflict` → 403 / 409: новые сценарии их не порождают; существующее поведение `AlertUsecase.Create` (403 при несовпадении компании) не меняется.
+  - `ErrUnavailable` → 503: AI отключён, 429, сетевая ошибка, таймаут.
+  - `ErrBadGateway` → 502: невалидный ответ LLM.
+  - Всё остальное → 500.
+  - Для повтора в фоне (D6) `internal/ai` дополнительно маркирует 429 и сетевые ошибки sentinel-ом `usecase.ErrAIRetryable` (`fmt.Errorf("%w: %w", domain.ErrUnavailable, usecase.ErrAIRetryable)`). Таймаут — `ErrUnavailable` без retryable-маркера (Q7 принят).
+  - Ошибки оборачиваются с `%w`, не проглатываются.
+- **Транзакционность:**
+  - 2A: `Upsert` саммари — одна операция. Конкурентная синхронная и фоновая генерация одного чата → last-write-wins по `chat_id`, допустимо. Upsert и применение 2B не в одной транзакции — это намеренный частичный успех (D3).
+  - 2B: атомарность автостатуса обеспечивает одно условие `UPDATE … WHERE status_source = 'auto'` без SELECT-then-UPDATE. Защиту от дублей алертов при конкуренции обеспечивает частичный уникальный индекс, а не предварительная проверка.
+  - 2C: только чтение; список и total считаются одним запросом либо двумя без транзакции (допустимая неконсистентность при параллельной записи).
+- **Идемпотентность:**
+  - 2A: кэш по `last_message_id`. Дедупликация очереди по `chatID`: ID удаляется из множества «в очереди» в момент взятия задачи воркером, поэтому сообщения, пришедшие во время генерации, вызовут ещё один пересчёт.
+  - 2B: `ON CONFLICT (chat_id, type) WHERE resolved_at IS NULL DO NOTHING` для AI-алертов и `no_reply`; повторный `UpdateAutoStatus` с тем же статусом безвреден. Поведение после ручного снятия `no_reply` при всё ещё ожидающем чате — Q9.
+  - 2C: неприменимо (чтение).
+- **Фоновые задачи:**
+  - 2A: один воркер `Run(ctx)` читает buffered channel на 100 задач (константа в usecase, Q7 принят). `Enqueue` выполняет неблокирующий `select … default` с логом при переполнении; `ctx` вызывающего игнорируется. Генерация идёт на контексте воркера с `force=false`. Повтор (D6) ждёт backoff через `select` с `ctx.Done()`. При отмене `Run` возвращается, оставшиеся задачи отбрасываются.
+  - 2B: `RunNoReplyChecker(ctx, interval)` с `time.Ticker`; `interval <= 0` → `ErrValidation` при старте.
+  - Оба запускаются и ожидаются в `cmd/app/main.go` (integration blocker).
+  - 2C: не требуются.
+- **Таймауты и внешние отказы:**
+  - HTTP-клиент `internal/ai` имеет `Timeout = AI_TIMEOUT` и использует `http.NewRequestWithContext`.
+  - Синхронная ручка — без повторов. Фон — один повтор только для retryable-ошибок.
+  - Без ключа нет сетевых вызовов.
+  - `WriteTimeout` сервера поднимается до `AI_TIMEOUT + 5s` в `cmd/app/main.go` (integration blocker, Q4 принят).
+  - Отказ AI не влияет на остальные ручки и на синхронизацию Группы 1.
+- **Порядок мержа и зоны конфликтов:**
+  - `internal/storage/postgres/chat.go` правят Группа 1, 2B (`UpdateAutoStatus`) и 2C (фильтры) — мержить последовательно: 2B → 2C.
+  - `internal/storage/postgres/message.go` правят Группа 1 и 2A (новый метод) — разные функции.
+  - `internal/usecase/interfaces.go` правят 2A, 2B, 2C — каждый добавляет свои контракты; контракты D3 фиксирует 2A первым, 2B ребейзится на них.
+  - `internal/handler/handler.go` правят 2A (новая ручка + маппинг ошибок) и 2C (`ListChats`).
+  - `cmd/app/main.go` правят Группа 1, 2A, 2B — интеграция вручную в конце.
+  - Номер миграции 2B — следующий свободный после последней в `main` на момент мержа (сейчас последняя `000008`, D1).
+- **Расхождения источника с принятыми решениями (решения имеют приоритет, зафиксированы):**
+  - `docs/group2_ai_and_product.md` предлагает `limit` 1..100; принято 1..200 (D18).
+  - Источник предлагает `ListByFilter`; принято изменение `ListByCompany(ChatFilter)` (D19).
+  - Источник предлагает `sort=last_message`; принято `last_message_at` (D17).
+  - Источник предлагает `UpdateAutoStatus(ctx, chatID, status)` с `status_source != 'manual'`; принято условие `= 'auto'` с company scope (D12). При CHECK `('auto','manual')` условия эквивалентны.
+- **Расхождения AGENTS.md с кодом (влияют на проверки):**
+  - `cmd/app/main.go` завершает процесс (`log.Fatalf`), если PostgreSQL недоступен; mock-fallback живёт только в handler при `nil` usecase (используется тестами).
+  - `main.go` при старте автоматически применяет все `migrations/*.up.sql` через `postgres.RunMigrations` (advisory lock, `schema_migrations`); `docker-compose.yml` миграции не монтирует. Значит, миграция 2B применится к любой БД, к которой подключится `go run ./cmd/app`, — запускать только на одноразовой БД.
+- **Принятые решения трека 2A (бывшие открытые вопросы):**
+  - **Q2, часть 2A.** Новый метод сообщений вынесен в узкий интерфейс `RecentMessageRepository`. `MessageRepository` и старые моки не меняются.
+  - **Q3.** «ID последнего сообщения» для кэша — последнее по `sent_at DESC, id DESC`, то есть последний элемент контекста, отправляемого в LLM. Догрузка Группой 1 более старой истории кэш не сбрасывает.
+  - **Q4.** В `cmd/app/main.go` (integration blocker) `http.Server.WriteTimeout` поднимается с 15s до `AI_TIMEOUT + 5s` (35s при дефолтах). Отдельного укороченного таймаута для синхронной ручки нет.
+  - **Q5.** Без ключа `generate` всегда отвечает `503`, даже при актуальном кэше. Порядок проверок: ID → чат и компания (404) → AI отключён (503) → сообщения (400) → кэш → LLM.
+  - **Q7.** Буфер очереди — 100 задач. Backoff — 2s или `Retry-After`, если он есть и не больше 10s. Таймаут не повторяется. Всё это константы в usecase, без новых env.
+  - **Q8.** Маскирование: последовательность из 10–15 цифр с допустимыми `+`, пробелами, `-`, `(`, `)` между ними → `[телефон]`.
+  - **Q10.** Разбор по полям (критерии 2A-8, 2A-8a): все перечисления нормализуются (`trim` + нижний регистр). Терпимо разбираются необязательные поля: мусор в `alert_types` отбрасывается, недопустимый `suggested_status` превращается в `nil`; всё отброшенное логируется. Строго (`502`) — битый JSON, отсутствующие текстовые ключи и недопустимый `risk`; значение по умолчанию для `risk` не подставляется. Почему возможен мусор при явном перечне в промпте: промпт — инструкция, а не гарантия. Модель может вернуть другой регистр, синоним или перевод (`Complaint`, `angry`, «жалоба»), скопировать `no_reply` из описания доменных типов или выполнить prompt injection из текста клиента (сообщения передаются в контекст как есть). Кроме того, `AI_API_BASE_URL` позволяет подключить любой OpenAI-совместимый провайдер или локальную модель, которые могут не поддерживать structured outputs с `enum`.
+  - **Q11.** Частичный успех (ошибка `HandleAnalysis`) маркируется только в логе с `company_id`/`chat_id`. Ответ — `200` с сохранённым саммари, без дополнительных заголовков.
+  - **Q13, часть 2A.** `force` принимает только `true`/`false`, иное значение → `400`.
+- **Открытые вопросы (решают участники 2B и 2C до старта своих треков; на 2A не влияют):**
+  - **Q1 (2C).** Mock-ветка `Handler.ListChats` (при `chatUsecase == nil`, на ней держатся старые handler-тесты) должна реализовать все новые фильтры, `q`, сортировку, пагинацию и `X-Total-Count`, или только валидацию параметров + пагинацию + заголовок? Предложение: валидация по тем же правилам, пагинация, `X-Total-Count`, фильтры `priority`/`account_id`/`unanswered`, обе сортировки; `q` — по `mockContacts`/`mockMessages`.
+  - **Q2 (2B, 2C).** 2B: подтвердить узкие интерфейсы `ChatAutoStatusRepository` и `AlertDedupRepository` вместо расширения существующих. 2C: разрешено ли менять старые тестовые файлы (`internal/usecase/chat_test.go`, `chat_adversarial_test.go`, `review_iteration3_test.go`, `internal/handler/handler_test.go`) только в части сигнатур моков и вызовов `ListByCompany`, без изменения ожиданий? Предложение: да на оба пункта.
+  - **Q6 (2C).** Как storage отдаёт `X-Total-Count`: `ListByCompany(ctx, filter) ([]domain.Chat, int, error)` через `COUNT(*) OVER()` (предложено) или отдельный метод `CountByCompany(ctx, filter)`? Что возвращать при `offset` за пределами выборки? Предложение: если строк нет и `offset > 0`, выполнить отдельный `SELECT COUNT(*)` с теми же условиями.
+  - **Q9 (2B).** После ручного снятия `no_reply`, пока `awaiting_reply_since` не сброшен, следующая проверка (через 1 мин) создаст новый активный `no_reply`. Предложение: не создавать повторно, если для чата уже есть `no_reply` (в т.ч. снятый) с `created_at >= awaiting_reply_since`. AI-алерты после снятия создаются повторно, если тип снова пришёл при следующем анализе.
+  - **Q12 (2B).** Миграция дедупликации: закрывать лишние активные дубли (`resolved_at = NOW()`, оставляя самый ранний; предложено, история сохраняется) или удалять их?
+  - **Q13, часть 2C.** Допустимые значения `unanswered`: только `true`/`false` (иное → 400; предложено) или любое значение, принимаемое `strconv.ParseBool`? `q=` (пусто или только пробелы): считать параметр незаданным (предложено) или `400` по D16?
+- **Ожидаемые проверки:**
+  - Для каждого трека: `gofmt -l <изменённые .go>`, `go vet ./...`, `go test -race ./...`, `go build ./...`. PASS — все зелёные, старые тесты не изменены по ожиданиям.
+  - 2A: unit `internal/ai` на `httptest.Server` (валидный JSON, ```` ```json ```` -обёртка, битый JSON, отсутствующий текстовый ключ и недопустимый `risk` → 502, `"High"` → `high`, недопустимый `suggested_status` → `nil` с 200, неизвестные значения, `no_reply`, разный регистр и дубли в `alert_types` → отброшены или нормализованы, 200; 429, 5xx, таймаут, проверка тела запроса: порядок, роли, лимиты, маскирование, отсутствие ключа в ошибках). Unit `ChatSummaryUsecase` на моках: кэш, `force`, чужая компания, пустой чат, AI отключён, ошибка summarizer не меняет БД, `nil`/ошибочный `ChatAnalysisHandler`, очередь (дедупликация, переполнение, отмена, повтор). Handler-тесты на коды 200/400/404/502/503.
+  - 2B: unit на моках — manual не перезаписывается, `nil`/пустые входы, дедупликация типов, отмена `RunNoReplyChecker`. Интеграционные тесты storage с `TEST_POSTGRES_DSN` — `UpdateAutoStatus` при manual/auto/чужой компании, `ON CONFLICT`, порог в наносекундах, миграция с дублями. Без DSN — явно SKIPPED.
+  - 2C: unit валидации фильтра, handler-тесты всех параметров и граничных значений, `X-Total-Count`. Интеграционный storage-тест SQL (экранирование `%`/`_`, сортировки, company scope) с `TEST_POSTGRES_DSN`.
+  - HTTP smoke (по возможности): `go run ./cmd/app` на одноразовой БД — `generate` без ключа → 503; `GET /chats?q=…&limit=…` → заголовок `X-Total-Count`.
+
+## 4. Контракты
+
+### 4.1. `POST /chats/:id/summary/generate` (2A, новый)
+
+- **Path/query-параметры:**
+  - `id` — int64 > 0, обязательный.
+  - `force` — только `true|false`, по умолчанию `false`; иное значение → `400` (Q13, часть 2A принята).
+  - `company_id` — существующий механизм `parseCompanyID`.
+- **Request body:** нет (игнорируется).
+- **Response body (200):** `domain.ChatSummary`:
+  ```json
+  {"chat_id": 42, "topic": "...", "agreements": "...", "next_step": "...", "open_questions": "...",
+   "risk": "low|medium|high", "last_message_id": 1234, "generated_at": "2026-11-24T10:00:00Z"}
+  ```
+- **Success status:** `200` — сохранённое (из кэша) или только что сгенерированное саммари.
+- **Ошибки** (формат `{"error": "<сообщение>"}`):
+
+  | Условие | Ошибка | HTTP |
+  |---|---|---|
+  | невалидный `id` или `force`, чат без сообщений | `ErrValidation` | 400 |
+  | чат не найден или чужой компании | `ErrNotFound` | 404 |
+  | AI отключён, 429, сетевая ошибка, таймаут; `summaryUsecase == nil` в handler | `ErrUnavailable` | 503 |
+  | неразбираемый или невалидный ответ LLM | `ErrBadGateway` | 502 |
+  | прочие ошибки (БД) | — | 500 |
+
+- **Совместимость:** новый роут; `GET`/`POST /chats/:id/summary` не меняются. В `handleUsecaseError` добавляются ветки 503/502. Существующие ответы 400/403/404/409/500 не меняются.
+
+### 4.2. `GET /chats` (2C, расширение)
+
+- **Query-параметры** (все необязательные, комбинируются через AND):
+
+  | Параметр | Тип и ограничения | Default | Ошибка |
+  |---|---|---|---|
+  | `status` | существующий `ChatStatus` | — | 400 |
+  | `employee_id` | int64 > 0 | — | 400 |
+  | `account_id` | int64 > 0; чужой компании → пустой результат | — | 400 |
+  | `priority` | `low\|normal\|high` | — | 400 |
+  | `unanswered` | `true\|false` (Q13); `true` ⇔ `awaiting_reply_since IS NOT NULL` | `false` | 400 |
+  | `q` | строка, после trim 2..100 символов (в рунах); пустая после trim = параметр не задан (Q13) | — | 400 |
+  | `sort` | `last_message_at` (DESC) \| `awaiting_reply` (ASC NULLS LAST); вторичный `id DESC` | `last_message_at` | 400 |
+  | `limit` | 1..200 | 50 | 400 |
+  | `offset` | ≥ 0 | 0 | 400 |
+
+- **Request body:** нет.
+- **Response body (200):** JSON-массив `domain.Chat` (поля без изменений), пустой результат — `[]`, никогда не `null`.
+- **Заголовки:** `X-Total-Count: <int>` — число чатов по фильтрам без `limit/offset`.
+- **Ошибки:** `400 {"error": "..."}` при невалидном параметре (`ErrValidation` или разбор в handler); `500` прочее.
+- **Совместимость:** форма ответа (массив) сохраняется. **Изменение поведения:** раньше без параметров возвращались все чаты компании; теперь по умолчанию не более 50 (D18). Клиенты, ожидающие полный список, должны читать `X-Total-Count` и листать. Старые handler-тесты должны остаться зелёными.
+
+### 4.3. Внутренние контракты (`internal/usecase/interfaces.go`)
+
+```go
+// 2A — фиксируется первым (D3).
+type AnalyzeChatInput struct {
+	Messages []domain.Message    // хронологически, не более AI_MAX_MESSAGES
+	Previous *domain.ChatSummary // nil, если саммари ещё нет
+}
+
+type AIAnalysisResult struct {
+	Topic, Agreements, NextStep, OpenQuestions string
+	Risk            domain.RiskLevel
+	SuggestedStatus *domain.ChatStatus // nil — не менять статус
+	AlertTypes      []domain.AlertType // после фильтрации в internal/ai: только complaint|refusal|negative|urgent, без дублей
+}
+
+type ChatSummarizer interface {
+	AnalyzeChat(ctx context.Context, in AnalyzeChatInput) (*AIAnalysisResult, error)
+}
+
+type ChatAnalysisHandler interface {
+	HandleAnalysis(ctx context.Context, companyID, chatID int64, res AIAnalysisResult) error
+}
+
+// Retryable-маркер для фоновой очереди (D6); оборачивается вместе с domain.ErrUnavailable.
+var ErrAIRetryable = errors.New("ai: retryable")
+
+// Узкие интерфейсы новых методов: RecentMessageRepository принят (2A); интерфейсы 2B — Q2.
+type RecentMessageRepository interface { // 2A
+	// Последние limit сообщений чата компании в хронологическом порядке (ASC).
+	ListLatestByChat(ctx context.Context, companyID, chatID int64, limit int) ([]domain.Message, error)
+}
+
+type ChatAutoStatusRepository interface { // 2B
+	// false, nil — чат manual, не найден или чужой компании.
+	UpdateAutoStatus(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) (bool, error)
+}
+
+type AlertDedupRepository interface { // 2B
+	// false, nil — активный алерт того же типа уже есть; company_id берётся из компании чата.
+	CreateIfNoActive(ctx context.Context, companyID, chatID int64, t domain.AlertType, createdAt time.Time) (bool, error)
+	// Создаёт no_reply для всех просроченных чатов; возвращает число созданных.
+	CreateOverdueNoReply(ctx context.Context, now time.Time) (int, error)
+}
+
+// 2C — изменение существующего метода (D19); форма total — Q6.
+type ChatRepository interface {
+	// ...
+	ListByCompany(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, int, error)
+}
+```
+
+- **Хук Группы 1 (D4):** `func (u *ChatSummaryUsecase) Enqueue(ctx context.Context, companyID, chatID int64)` — сигнатура совпадает с `OnChatUpdated`, передаётся напрямую.
+  - Не блокирует и не возвращает ошибок; некорректные ID (≤ 0) отбрасываются с логом.
+  - `ctx` вызывающего не используется.
+  - Повторный вызов для чата, уже стоящего в очереди, — no-op.
+- **Воркеры:**
+  - `func (u *ChatSummaryUsecase) Run(ctx context.Context)` — блокирует до `ctx.Done()`.
+  - `func (u *AlertUsecase) RunNoReplyChecker(ctx context.Context, interval time.Duration) error` — блокирует до `ctx.Done()`, возвращает `nil` при отмене и `ErrValidation` при `interval <= 0`.
+- **Конфигурация (blocker `internal/config/config.go`):**
+
+  | Переменная | Default | Трек |
+  |---|---|---|
+  | `AI_API_BASE_URL` | `https://api.openai.com/v1` | 2A |
+  | `AI_API_KEY` | пусто → AI отключён | 2A |
+  | `AI_MODEL` | — (значение по умолчанию выбирает человек при интеграции) | 2A |
+  | `AI_TIMEOUT` | `30s` | 2A |
+  | `AI_MAX_MESSAGES` | `50` | 2A |
+  | `AI_MAX_CHARS` | `12000` | 2A |
+  | `NO_REPLY_CHECK_INTERVAL` | `1m` | 2B |
+
+  `AI_API_KEY` не логируется и не попадает в ошибки и отчёты.
+
+## 5. Схема БД
+
+- **Используемые существующие таблицы:**
+  - `chats` — `id`, `account_id → accounts ON DELETE CASCADE`, `contact_id → contacts`, `status VARCHAR(32)` (без CHECK — валидация статуса в usecase), `status_source CHECK ('auto','manual')`, `priority CHECK ('low','normal','high')`, `last_message_at`, `awaiting_reply_since` (ведёт Группа 1), `unread_count`. Индексы: `account_id`, `contact_id`, `status`, `last_message_at DESC`.
+  - `accounts` — `id`, `company_id`, `employee_id` (источник company scope для чатов).
+  - `contacts` — `name`, `username` (поиск 2C), `company_id`.
+  - `messages` — `id`, `chat_id → chats ON DELETE CASCADE` (000006), `direction CHECK ('in','out')`, `text`, `sent_at`; индекс `idx_messages_chat_id_sent_at (chat_id, sent_at ASC)`.
+  - `chat_summaries` (000006) — `chat_id PK → chats ON DELETE CASCADE`, `topic`, `agreements`, `next_step`, `open_questions`, `risk CHECK ('low','medium','high')`, `last_message_id`, `generated_at`.
+  - `alerts` (000005/000006) — `company_id → companies`, `chat_id → chats ON DELETE CASCADE`, `type CHECK (no_reply, complaint, refusal, negative, urgent)`, `created_at`, `resolved_at`; индексы `idx_alerts_company_active (company_id, created_at DESC, id DESC) WHERE resolved_at IS NULL`, `idx_alerts_chat_id`.
+  - `companies` — `no_reply_threshold BIGINT` в наносекундах, default `7200000000000` (2 ч).
+- **Новые таблицы и миграции:**
+  - 2A: новая миграция не требуется. Последние N сообщений берутся обратным сканом `idx_messages_chat_id_sent_at`: внутренний запрос `ORDER BY m.sent_at DESC, m.id DESC LIMIT $n`, внешний — `ORDER BY sent_at ASC, id ASC`.
+  - 2C: новая миграция не требуется (D16, без индексов под поиск). Риск: `ILIKE '%…%'` и `EXISTS` по `messages.text` — последовательное чтение сообщений чатов компании; для MVP-объёмов принимается.
+  - 2B: `migrations/00000N_alerts_active_unique.up.sql` / `.down.sql` (номер `00000N` уточняется при мерже, D1; сейчас последняя — `000008`).
+- **Столбцы:** новых столбцов нет.
+- **Ключи:** новых PK/FK нет.
+- **Ограничения (2B):** частичный уникальный индекс `uq_alerts_chat_type_active ON alerts (chat_id, type) WHERE resolved_at IS NULL` — не более одного активного алерта типа на чат. Вставки используют `ON CONFLICT (chat_id, type) WHERE resolved_at IS NULL DO NOTHING` (предикат обязан совпадать с индексом).
+- **Индексы:** только `uq_alerts_chat_type_active` (2B); он же ускоряет проверку активного алерта по чату. Под `awaiting_reply_since` индекс не добавляется: фоновая проверка раз в минуту читает `chats` целиком, для MVP это допустимо.
+- **Company scope и связи:**
+  - Изоляция чатов, сообщений, саммари — через `chats.account_id → accounts.company_id`.
+  - `alerts.company_id` при вставке берётся из `accounts.company_id` чата (`INSERT … SELECT a.company_id FROM chats c JOIN accounts a …`), а не из входа.
+  - Массовое создание `no_reply`:
+    ```sql
+    INSERT INTO alerts (company_id, chat_id, type, created_at)
+    SELECT a.company_id, c.id, 'no_reply', $1
+    FROM chats c
+    JOIN accounts a ON a.id = c.account_id
+    JOIN companies co ON co.id = a.company_id
+    WHERE c.awaiting_reply_since IS NOT NULL
+      AND c.awaiting_reply_since + make_interval(secs => co.no_reply_threshold / 1000000000.0) < $1
+    ON CONFLICT (chat_id, type) WHERE resolved_at IS NULL DO NOTHING
+    ```
+    Это поведение без учёта Q9.
+- **Up/down-стратегия (2B):**
+  - *up:* (1) обработать существующие дубли активных алертов (см. «Существующие данные»); (2) `CREATE UNIQUE INDEX IF NOT EXISTS uq_alerts_chat_type_active …`. Шаги идут в одной миграции, порядок обязателен: иначе создание индекса упадёт на дублях.
+  - *down:* `DROP INDEX IF EXISTS uq_alerts_chat_type_active;`. Изменённые данные (резолв дублей) не восстанавливаются, откат схемы безопасен.
+  - Миграции применяются автоматически при старте `cmd/app` (`RunMigrations`). Проверять только на одноразовой БД, не на личной или production.
+- **Существующие данные:**
+  - 2B: до создания индекса для каждой пары `(chat_id, type)` с несколькими активными алертами оставить самый ранний (минимальный `id`), остальным выставить `resolved_at = NOW()` (предложено; альтернатива — удаление, Q12):
+    ```sql
+    UPDATE alerts a SET resolved_at = NOW()
+    WHERE a.resolved_at IS NULL
+      AND EXISTS (SELECT 1 FROM alerts b
+                  WHERE b.chat_id = a.chat_id AND b.type = a.type
+                    AND b.resolved_at IS NULL AND b.id < a.id);
+    ```
+    Операция короткая (активных алертов мало), блокирует затронутые строки `alerts` на время миграции.
+  - 2A, 2C: существующие данные не затрагиваются.
