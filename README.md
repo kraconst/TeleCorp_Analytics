@@ -7,6 +7,7 @@
 ## Структура
 
 ```
+frontend/                     React + TypeScript SPA кабинета аналитики
 cmd/app/main.go               точка входа: читает конфиг, подключает БД и запускает сервер
 docs/                         требования и техническое задание проекта
 migrations/                   SQL-миграции схемы базы данных
@@ -39,6 +40,29 @@ docker run --rm -p 8080:8080 go-server:1
 ```bash
 docker run --rm -p 8080:8080 ghcr.io/kraconst/go-server:1
 ```
+
+### Frontend
+
+Требуются Node.js 22 LTS и npm. API по умолчанию проксируется на `http://localhost:8080`; другой адрес можно задать через `API_PROXY_TARGET` в `frontend/.env.local` (шаблон — `frontend/.env.example`).
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Vite открывает кабинет на `http://127.0.0.1:5173`. Проверки frontend:
+
+```bash
+npm run typecheck
+npm run lint
+npm run test -- --run
+npm run build
+npx playwright install chromium
+npm run e2e
+```
+
+Текущий Dev Session в шапке переключает owner/manager только для предпросмотра интерфейса: серверной JWT-авторизации пока нет. QR/2FA, reconnect и sync Telegram, а также редактирование компании не имитируются до появления соответствующих API.
 
 ### Настройки
 

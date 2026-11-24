@@ -38,5 +38,8 @@ go.work.sum
 .idea/
 .vscode/
 
+# Local frontend toolchain
+/.tools/
+
 # Local Kimi Code permissions and machine-specific settings
 .kimi-code/local.toml

@@ -1,0 +1,90 @@
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/manrope';
+@import 'tailwindcss';
+
+@theme inline {
+  --font-sans: 'Inter Variable', 'Segoe UI', sans-serif;
+  --font-display: 'Manrope Variable', 'Inter Variable', sans-serif;
+}
+
+:root {
+  font-family: var(--font-sans);
+  color: #202724;
+  background: #f7f7f5;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --app-border: #e3e5e1;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-color: #c7cbc5 transparent;
+  scrollbar-width: thin;
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  min-height: 100dvh;
+  overflow-x: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+::selection {
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.surface {
+  border: 1px solid var(--app-border);
+  background: #fff;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
