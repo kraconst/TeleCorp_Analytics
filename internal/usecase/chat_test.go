@@ -355,6 +355,7 @@ func TestChatUsecase_Create(t *testing.T) {
 }
 
 type mockAccountRepoForChat struct {
+	usecase.TelegramAccountStateRepository
 	getByIDFn func(ctx context.Context, id int64) (*domain.Account, error)
 }
 

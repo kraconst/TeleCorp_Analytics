@@ -140,6 +140,62 @@ func (s *AccountStorage) UpdateStatus(ctx context.Context, id int64, status doma
 	return nil
 }
 
+func (s *AccountStorage) LoadSession(ctx context.Context, companyID, accountID int64) ([]byte, error) {
+	if err := validateTelegramAccountIDs(companyID, accountID); err != nil {
+		return nil, err
+	}
+	const query = `SELECT session FROM accounts WHERE company_id = $1 AND id = $2`
+	var data []byte
+	if err := s.db.GetContext(ctx, &data, query, companyID, accountID); err != nil {
+		return nil, mapPgError(fmt.Errorf("load account session: %w", err))
+	}
+	return data, nil
+}
+
+func (s *AccountStorage) UpdateSession(ctx context.Context, companyID, accountID int64, data []byte) error {
+	const query = `UPDATE accounts SET session = $3 WHERE company_id = $1 AND id = $2 RETURNING id`
+	return s.updateTelegramAccount(ctx, query, "update account session", companyID, accountID, data)
+}
+
+func (s *AccountStorage) UpdateLastActivity(ctx context.Context, companyID, accountID int64, at time.Time) error {
+	if at.IsZero() {
+		return fmt.Errorf("%w: missing account activity time", domain.ErrValidation)
+	}
+	const query = `
+		UPDATE accounts
+		SET last_activity_at = GREATEST(last_activity_at, $3)
+		WHERE company_id = $1 AND id = $2
+		RETURNING id
+	`
+	return s.updateTelegramAccount(ctx, query, "update account activity", companyID, accountID, at.UTC())
+}
+
+func (s *AccountStorage) UpdateSessionStatus(ctx context.Context, companyID, accountID int64, status domain.AccountStatus) error {
+	if status != domain.StatusDisconnected && status != domain.StatusBanned {
+		return fmt.Errorf("%w: invalid Telegram session status", domain.ErrValidation)
+	}
+	const query = `UPDATE accounts SET status = $3 WHERE company_id = $1 AND id = $2 RETURNING id`
+	return s.updateTelegramAccount(ctx, query, "update account session status", companyID, accountID, status)
+}
+
+func (s *AccountStorage) updateTelegramAccount(ctx context.Context, query, operation string, companyID, accountID int64, value any) error {
+	if err := validateTelegramAccountIDs(companyID, accountID); err != nil {
+		return err
+	}
+	var id int64
+	if err := s.db.GetContext(ctx, &id, query, companyID, accountID, value); err != nil {
+		return mapPgError(fmt.Errorf("%s: %w", operation, err))
+	}
+	return nil
+}
+
+func validateTelegramAccountIDs(companyID, accountID int64) error {
+	if companyID <= 0 || accountID <= 0 {
+		return fmt.Errorf("%w: invalid company_id or account_id", domain.ErrValidation)
+	}
+	return nil
+}
+
 func (s *AccountStorage) AssignEmployee(ctx context.Context, accountID, employeeID int64) error {
 	tx, err := s.db.BeginTxx(ctx, nil)
 	if err != nil {

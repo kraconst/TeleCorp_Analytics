@@ -11,6 +11,7 @@ import (
 )
 
 type mockAccountRepoStub struct {
+	usecase.TelegramAccountStateRepository
 	getByID func(ctx context.Context, id int64) (*domain.Account, error)
 	assign  func(ctx context.Context, accountID, employeeID int64) error
 }
@@ -31,9 +32,6 @@ func (m *mockAccountRepoStub) ListByEmployee(ctx context.Context, employeeID int
 	return nil, nil
 }
 func (m *mockAccountRepoStub) UpdateStatus(ctx context.Context, id int64, status domain.AccountStatus) error {
-	return nil
-}
-func (m *mockAccountRepoStub) UpdateSession(ctx context.Context, id int64, session []byte) error {
 	return nil
 }
 func (m *mockAccountRepoStub) AssignEmployee(ctx context.Context, accountID, employeeID int64) error {

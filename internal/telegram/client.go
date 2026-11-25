@@ -87,11 +87,12 @@ func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
 		proxyAddr = "http://" + proxyAddr
 	}
 	proxyURL, err := url.Parse(proxyAddr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid proxy URL: %w", err)
+	if err != nil || proxyURL.Hostname() == "" {
+		return nil, fmt.Errorf("invalid proxy URL or missing host")
 	}
 
-	switch strings.ToLower(proxyURL.Scheme) {
+	proxyURL.Scheme = strings.ToLower(proxyURL.Scheme)
+	switch proxyURL.Scheme {
 	case "socks5", "socks5h":
 		dialer, err := proxy.FromURL(proxyURL, proxy.Direct)
 		if err != nil {
@@ -105,21 +106,30 @@ func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
 		}, nil
 
 	case "http", "https":
-		isTLS := strings.ToLower(proxyURL.Scheme) == "https"
+		isTLS := proxyURL.Scheme == "https"
+		host := proxyURL.Hostname()
+		port := proxyURL.Port()
+		if port == "" {
+			port = "80"
+			if isTLS {
+				port = "443"
+			}
+		}
+		proxyAddress := net.JoinHostPort(host, port)
 		return func(ctx context.Context, network, addr string) (net.Conn, error) {
 			var d net.Dialer
-			conn, err := d.DialContext(ctx, "tcp", proxyURL.Host)
+			conn, err := d.DialContext(ctx, "tcp", proxyAddress)
 			if err != nil {
-				return nil, fmt.Errorf("connect to proxy %s: %w", proxyURL.Host, err)
+				return nil, fmt.Errorf("connect to proxy %s: %w", proxyAddress, err)
 			}
 
 			if isTLS {
 				tlsConn := tls.Client(conn, &tls.Config{
-					ServerName: proxyURL.Hostname(),
+					ServerName: host,
 				})
 				if err := tlsConn.HandshakeContext(ctx); err != nil {
 					conn.Close()
-					return nil, fmt.Errorf("tls handshake to proxy %s: %w", proxyURL.Host, err)
+					return nil, fmt.Errorf("tls handshake to proxy %s: %w", proxyAddress, err)
 				}
 				conn = tlsConn
 			}
@@ -130,6 +140,8 @@ func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
 				deadline = d
 			}
 			_ = conn.SetDeadline(deadline)
+			stopCancellation := context.AfterFunc(ctx, func() { _ = conn.Close() })
+			defer stopCancellation()
 
 			req := &http.Request{
 				Method: "CONNECT",
@@ -138,12 +150,16 @@ func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
 				Header: make(http.Header),
 			}
 			if proxyURL.User != nil {
-				auth := proxyURL.User.String()
+				password, _ := proxyURL.User.Password()
+				auth := proxyURL.User.Username() + ":" + password
 				req.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(auth)))
 			}
 
 			if err := req.Write(conn); err != nil {
 				conn.Close()
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("send CONNECT to proxy: %w", ctx.Err())
+				}
 				return nil, fmt.Errorf("send CONNECT to proxy: %w", err)
 			}
 
@@ -151,15 +167,27 @@ func createProxyDialer(proxyAddr string) (dcs.DialFunc, error) {
 			resp, err := http.ReadResponse(bufReader, req)
 			if err != nil {
 				conn.Close()
-				return nil, fmt.Errorf("read CONNECT response: %w", err)
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("read CONNECT response: %w", ctx.Err())
+				}
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					return nil, fmt.Errorf("read CONNECT response: %w", context.DeadlineExceeded)
+				}
+				return nil, fmt.Errorf("read CONNECT response: invalid or incomplete response")
 			}
-			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
 				conn.Close()
-				return nil, fmt.Errorf("proxy returned status %s", resp.Status)
+				_ = resp.Body.Close()
+				return nil, fmt.Errorf("proxy returned HTTP status %d", resp.StatusCode)
 			}
 
-			// Clear deadline after handshake
+			// On success the remaining bytes belong to the tunnel, including
+			// bytes already buffered while parsing the response headers.
+			// Detach the dial context before handing over the connection.
+			if !stopCancellation() || ctx.Err() != nil {
+				conn.Close()
+				return nil, fmt.Errorf("finish CONNECT handshake: %w", ctx.Err())
+			}
 			_ = conn.SetDeadline(time.Time{})
 
 			return &bufferedConn{
@@ -274,85 +302,83 @@ func (c *Client) InspectQR(ctx context.Context, onURL func(string), passwordProm
 }
 
 func (c *Client) fetchDialogs(ctx context.Context, limit int, dialogs *[]Dialog) error {
-	result, err := c.client.API().MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: limit})
+	result, err := retryTelegramRPC(ctx, func(ctx context.Context) (tg.MessagesDialogsClass, error) {
+		return c.client.API().MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+			OffsetPeer: &tg.InputPeerEmpty{}, Limit: limit,
+		})
+	})
 	if err != nil {
 		return fmt.Errorf("get dialogs: %w", err)
 	}
+	page, err := modifiedDialogs(result)
+	if err != nil {
+		return err
+	}
+	*dialogs = append(*dialogs, mapInspectionDialogs(page)...)
+	return nil
+}
 
-	titleByPeer := make(map[string]string)
-	switch r := result.(type) {
-	case *tg.MessagesDialogs:
-		for _, u := range r.Users {
-			if user, ok := u.(*tg.User); ok {
-				titleByPeer[fmt.Sprintf("user_%d", user.ID)] = strings.TrimSpace(user.FirstName + " " + user.LastName)
-			}
-		}
-		for _, ch := range r.Chats {
-			switch c := ch.(type) {
-			case *tg.Chat:
-				titleByPeer[fmt.Sprintf("chat_%d", c.ID)] = c.Title
-			case *tg.Channel:
-				titleByPeer[fmt.Sprintf("channel_%d", c.ID)] = c.Title
-			}
-		}
-		for _, d := range r.Dialogs {
-			if diag, ok := d.(*tg.Dialog); ok {
-				var id int64
-				var kind string
-				switch p := diag.Peer.(type) {
-				case *tg.PeerUser:
-					id = p.UserID
-					kind = "user"
-				case *tg.PeerChat:
-					id = p.ChatID
-					kind = "group"
-				case *tg.PeerChannel:
-					id = p.ChannelID
-					kind = "channel"
-				}
-				name := titleByPeer[fmt.Sprintf("%s_%d", kind, id)]
-				if name == "" {
-					name = fmt.Sprintf("ID %d", id)
-				}
-				*dialogs = append(*dialogs, Dialog{ID: id, Kind: kind, Name: name})
-			}
-		}
-	case *tg.MessagesDialogsSlice:
-		for _, u := range r.Users {
-			if user, ok := u.(*tg.User); ok {
-				titleByPeer[fmt.Sprintf("user_%d", user.ID)] = strings.TrimSpace(user.FirstName + " " + user.LastName)
-			}
-		}
-		for _, ch := range r.Chats {
-			switch c := ch.(type) {
-			case *tg.Chat:
-				titleByPeer[fmt.Sprintf("chat_%d", c.ID)] = c.Title
-			case *tg.Channel:
-				titleByPeer[fmt.Sprintf("channel_%d", c.ID)] = c.Title
-			}
-		}
-		for _, d := range r.Dialogs {
-			if diag, ok := d.(*tg.Dialog); ok {
-				var id int64
-				var kind string
-				switch p := diag.Peer.(type) {
-				case *tg.PeerUser:
-					id = p.UserID
-					kind = "user"
-				case *tg.PeerChat:
-					id = p.ChatID
-					kind = "group"
-				case *tg.PeerChannel:
-					id = p.ChannelID
-					kind = "channel"
-				}
-				name := titleByPeer[fmt.Sprintf("%s_%d", kind, id)]
-				if name == "" {
-					name = fmt.Sprintf("ID %d", id)
-				}
-				*dialogs = append(*dialogs, Dialog{ID: id, Kind: kind, Name: name})
-			}
+func modifiedDialogs(result tg.MessagesDialogsClass) (tg.ModifiedMessagesDialogs, error) {
+	if result != nil {
+		if page, ok := result.AsModified(); ok {
+			return page, nil
 		}
 	}
-	return nil
+	return nil, fmt.Errorf("unexpected Telegram dialogs response %T", result)
+}
+
+type telegramPeerKey struct {
+	kind string
+	id   int64
+}
+
+func dialogPeerKey(peer tg.PeerClass) telegramPeerKey {
+	switch p := peer.(type) {
+	case *tg.PeerUser:
+		return telegramPeerKey{kind: "user", id: p.UserID}
+	case *tg.PeerChat:
+		return telegramPeerKey{kind: "group", id: p.ChatID}
+	case *tg.PeerChannel:
+		return telegramPeerKey{kind: "channel", id: p.ChannelID}
+	default:
+		return telegramPeerKey{}
+	}
+}
+
+func mapInspectionDialogs(page tg.ModifiedMessagesDialogs) []Dialog {
+	titleByPeer := make(map[telegramPeerKey]string)
+	for _, item := range page.GetUsers() {
+		if user, ok := item.(*tg.User); ok {
+			titleByPeer[telegramPeerKey{kind: "user", id: user.ID}] = telegramUserName(user)
+		}
+	}
+	for _, item := range page.GetChats() {
+		switch ch := item.(type) {
+		case *tg.Chat:
+			titleByPeer[telegramPeerKey{kind: "group", id: ch.ID}] = ch.Title
+		case *tg.ChatForbidden:
+			titleByPeer[telegramPeerKey{kind: "group", id: ch.ID}] = ch.Title
+		case *tg.Channel:
+			titleByPeer[telegramPeerKey{kind: "channel", id: ch.ID}] = ch.Title
+		case *tg.ChannelForbidden:
+			titleByPeer[telegramPeerKey{kind: "channel", id: ch.ID}] = ch.Title
+		}
+	}
+	result := make([]Dialog, 0, len(page.GetDialogs()))
+	for _, item := range page.GetDialogs() {
+		dialog, ok := item.(*tg.Dialog)
+		if !ok {
+			continue
+		}
+		key := dialogPeerKey(dialog.Peer)
+		if key.id <= 0 {
+			continue
+		}
+		name := titleByPeer[key]
+		if name == "" {
+			name = fmt.Sprintf("ID %d", key.id)
+		}
+		result = append(result, Dialog{ID: key.id, Kind: key.kind, Name: name})
+	}
+	return result
 }

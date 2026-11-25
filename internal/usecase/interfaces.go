@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/kraconst/GO_server/internal/domain"
@@ -9,12 +10,48 @@ import (
 
 // AccountRepository определяет контракт доступа к данным аккаунтов.
 type AccountRepository interface {
+	TelegramAccountStateRepository
 	Create(ctx context.Context, acc domain.Account) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.Account, error)
 	ListByCompany(ctx context.Context, companyID int64) ([]domain.Account, error)
 	ListByEmployee(ctx context.Context, employeeID int64) ([]domain.Account, error)
 	UpdateStatus(ctx context.Context, id int64, status domain.AccountStatus) error
 	AssignEmployee(ctx context.Context, accountID, employeeID int64) error
+}
+
+// TelegramAccountStateRepository ограничивает работу с сессией и её статусом компанией.
+// LoadSession возвращает пустой срез для аккаунта без сессии и ErrNotFound при отсутствии строки.
+type TelegramAccountStateRepository interface {
+	LoadSession(ctx context.Context, companyID, accountID int64) ([]byte, error)
+	UpdateSession(ctx context.Context, companyID, accountID int64, data []byte) error
+	UpdateLastActivity(ctx context.Context, companyID, accountID int64, at time.Time) error
+	UpdateSessionStatus(ctx context.Context, companyID, accountID int64, status domain.AccountStatus) error
+}
+
+var (
+	ErrTelegramUnavailable    = errors.New("Telegram sync is not configured")
+	ErrTelegramSessionInvalid = errors.New("Telegram session is missing or invalid")
+)
+
+// TelegramDialog содержит метаданные собеседника для чтения истории той же сессией.
+type TelegramDialog struct {
+	TelegramUserID int64
+	Name           string
+	Username       string
+	UnreadCount    int
+}
+
+// TelegramAccountReader действует только внутри вызова TelegramSyncClient.WithAccount.
+type TelegramAccountReader interface {
+	ListDialogs(ctx context.Context) ([]TelegramDialog, error)
+	// ListHistory читает диалог из ListDialogs той же сессии и возвращает полную
+	// выборку после afterID в порядке возрастания ID.
+	// Внутренний ChatID заполняет вызывающий код при сохранении сообщений.
+	ListHistory(ctx context.Context, dialog TelegramDialog, afterID int64) ([]domain.Message, error)
+}
+
+type TelegramSyncClient interface {
+	WithAccount(ctx context.Context, companyID, accountID int64, fn func(context.Context, TelegramAccountReader) error) error
 }
 
 // EmployeeRepository определяет контракт доступа к данным сотрудников.
