@@ -33,12 +33,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`pointer-events-auto flex items-start gap-3 rounded-lg border bg-white p-3 text-sm shadow-lg ${
+            className={`pointer-events-auto flex items-start gap-3 rounded-xl border bg-white p-3 text-sm shadow-lg ${
               toast.tone === 'error' ? 'border-red-200 text-red-800' : 'border-emerald-200 text-emerald-900'
             }`}
           >
             <span className="min-w-0 flex-1 leading-5">{toast.message}</span>
-            <button className="cursor-pointer text-stone-400 hover:text-stone-700" onClick={() => dismiss(toast.id)} aria-label="Закрыть уведомление">
+            <button className="cursor-pointer text-stone-500 hover:text-stone-700" onClick={() => dismiss(toast.id)} aria-label="Закрыть уведомление">
               <X className="size-4" />
             </button>
           </div>

@@ -30,14 +30,14 @@ export function Dialog({
           className={cn(
             'fixed z-50 flex flex-col overflow-hidden border-stone-200 bg-white shadow-xl outline-none',
             side === 'center'
-              ? 'left-1/2 top-1/2 max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-xl border'
+              ? 'left-1/2 top-1/2 max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-2xl border'
               : 'inset-y-0 right-0 h-dvh w-[min(420px,100vw)] border-l',
             className,
           )}
         >
           <div className="flex items-start justify-between gap-4 border-b border-stone-200 px-5 py-4">
             <div>
-              <DialogPrimitive.Title className="font-display text-lg font-semibold text-stone-900">
+              <DialogPrimitive.Title className="font-display text-lg font-medium text-stone-900">
                 {title}
               </DialogPrimitive.Title>
               {description && (
@@ -46,7 +46,7 @@ export function Dialog({
                 </DialogPrimitive.Description>
               )}
             </div>
-            <DialogPrimitive.Close className="rounded-md p-1.5 text-stone-500 hover:bg-stone-100 hover:text-stone-900" aria-label="Закрыть">
+            <DialogPrimitive.Close className="rounded-lg p-2 text-stone-500 hover:bg-stone-100 hover:text-stone-900" aria-label="Закрыть">
               <X className="size-4" />
             </DialogPrimitive.Close>
           </div>

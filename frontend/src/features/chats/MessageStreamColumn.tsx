@@ -24,8 +24,8 @@ function MediaLabel({ type }: { type: MediaType }) {
   }[type] ?? { label: 'Вложение', icon: File };
   const Icon = config.icon;
   return (
-    <span className="mb-1.5 flex items-center gap-1.5 text-xs font-medium opacity-75">
-      <Icon className="size-3.5" /> {config.label}
+    <span className="mb-2 flex items-center gap-2 text-xs font-medium opacity-75">
+      <Icon className="size-4" /> {config.label}
     </span>
   );
 }
@@ -86,8 +86,8 @@ export function MessageStreamColumn({
 
   if (!chatId) {
     return (
-      <section className="hidden h-full min-w-0 flex-1 items-center justify-center bg-stone-50/60 md:flex">
-        <EmptyState icon={MessageSquareText} title="Выберите диалог" description="Откройте чат в списке, чтобы увидеть переписку, саммари и аналитику." />
+      <section className="hidden h-full min-w-0 flex-1 items-center justify-center bg-stone-50/60 lg:flex">
+        <EmptyState icon={MessageSquareText} title="Выберите диалог" description="Откройте чат в списке, чтобы увидеть переписку, саммари и аналитику" />
       </section>
     );
   }
@@ -108,18 +108,18 @@ export function MessageStreamColumn({
     <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-white" aria-label={`Переписка с ${name}`}>
       <header className="shrink-0 border-b border-stone-200 px-3 py-3 sm:px-4">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="size-8 md:hidden" onClick={onBack} aria-label="Вернуться к списку"><ArrowLeft className="size-4" /></Button>
+          <Button variant="ghost" size="icon" className="size-8 lg:hidden" onClick={onBack} aria-label="Вернуться к списку"><ArrowLeft className="size-4" /></Button>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <h2 className="truncate font-display text-sm font-semibold text-stone-950 sm:text-base">{name}</h2>
+              <h2 className="truncate font-display text-sm font-medium text-stone-950 sm:text-base">{name}</h2>
               {outsideFilter && <Badge className="border-amber-200 bg-amber-50 text-amber-800">Вне фильтра</Badge>}
             </div>
-            <p className="mt-0.5 truncate text-[11px] text-stone-400">
+            <p className="mt-0.5 truncate text-xs text-stone-500">
               {displayUsername(contact?.username)}
               {item?.employee?.name || item?.account?.employee_name ? ` · ${item.employee?.name || item.account?.employee_name}` : ''}
             </p>
           </div>
-          <Button variant="secondary" size="icon" className="size-8 xl:hidden" onClick={onOpenDetails} aria-label="Открыть детали чата"><PanelRightOpen className="size-4" /></Button>
+          <Button variant="secondary" size="icon" className="size-8 min-[1440px]:hidden" onClick={onOpenDetails} aria-label="Открыть детали чата"><PanelRightOpen className="size-4" /></Button>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Select
@@ -131,7 +131,7 @@ export function MessageStreamColumn({
           >
             {chatStatusOrder.map((status) => <option key={status} value={status}>{chatStatusConfig[status].label}</option>)}
           </Select>
-          <span className="text-[11px] text-stone-400">{statusSourceConfig[chat.status_source] ?? 'Источник неизвестен'}</span>
+          <span className="text-xs text-stone-500">{statusSourceConfig[chat.status_source] ?? 'Источник неизвестен'}</span>
         </div>
       </header>
       {analyticsQuery.isError ? (
@@ -160,12 +160,12 @@ export function MessageStreamColumn({
                   void messagesQuery.fetchNextPage();
                 }}
               >
-                <ArrowUp className="size-3.5" /> {messagesQuery.isFetchingNextPage ? 'Загружаем…' : 'Более ранние сообщения'}
+                <ArrowUp className="size-4" /> {messagesQuery.isFetchingNextPage ? 'Загружаем…' : 'Более ранние сообщения'}
               </Button>
             </div>
           )}
           {messages.length === 0 ? (
-            <EmptyState title="История пока пуста" description="Сообщения появятся здесь после синхронизации с Telegram." />
+            <EmptyState title="История пока пуста" description="Сообщения появятся здесь после синхронизации с Telegram" />
           ) : (
             <div className="mx-auto max-w-3xl space-y-2">
               {messages.map((message, index) => {
@@ -174,15 +174,15 @@ export function MessageStreamColumn({
                 const outgoing = message.direction === 'out';
                 return (
                   <div key={message.id}>
-                    {newDay && <div className="my-4 text-center text-[10px] font-medium uppercase tracking-wide text-stone-400">{formatDay(message.sent_at)}</div>}
+                    {newDay && <div className="my-4 text-center text-xs font-medium text-stone-500">{formatDay(message.sent_at)}</div>}
                     <div className={cn('flex', outgoing ? 'justify-end' : 'justify-start')}>
                       <article className={cn(
                         'max-w-[88%] rounded-lg border px-3 py-2 text-sm shadow-[0_1px_1px_rgba(0,0,0,0.025)] sm:max-w-[78%]',
                         outgoing ? 'rounded-br-sm border-blue-200 bg-blue-50 text-blue-950' : 'rounded-bl-sm border-stone-200 bg-white text-stone-800',
                       )}>
                         {message.media_type && <MediaLabel type={message.media_type} />}
-                        {message.text ? <p className="whitespace-pre-wrap break-words leading-5 [overflow-wrap:anywhere]">{message.text}</p> : !message.media_type && <p className="text-stone-400">Сообщение без текста</p>}
-                        <time className={cn('mt-1 block text-right text-[10px] tabular-nums', outgoing ? 'text-blue-500' : 'text-stone-400')} dateTime={message.sent_at}>{formatMessageTime(message.sent_at)}</time>
+                        {message.text ? <p className="whitespace-pre-wrap break-words leading-5 [overflow-wrap:anywhere]">{message.text}</p> : !message.media_type && <p className="text-stone-500">Сообщение без текста</p>}
+                        <time className={cn('mt-1 block text-right text-xs tabular-nums', outgoing ? 'text-blue-700' : 'text-stone-500')} dateTime={message.sent_at}>{formatMessageTime(message.sent_at)}</time>
                       </article>
                     </div>
                   </div>
@@ -192,8 +192,8 @@ export function MessageStreamColumn({
           )}
         </div>
       )}
-      <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-stone-200 bg-white px-3 py-2.5 text-center text-[11px] text-stone-400">
-        <Info className="size-3.5 shrink-0" /> Режим просмотра · сообщения синхронизируются из Telegram
+      <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-stone-200 bg-white px-3 py-3 text-center text-xs text-stone-500">
+        <Info className="size-4 shrink-0" /> Режим просмотра · сообщения синхронизируются из Telegram
       </footer>
     </section>
   );

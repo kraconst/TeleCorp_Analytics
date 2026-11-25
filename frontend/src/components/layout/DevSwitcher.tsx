@@ -32,8 +32,8 @@ export function DevSwitcher() {
   };
 
   return (
-    <div className="flex items-center gap-1.5 rounded-lg border border-dashed border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-950">
-      <FlaskConical className="hidden size-3.5 shrink-0 sm:block" aria-hidden="true" />
+    <div className="flex items-center gap-2 rounded-xl border border-dashed border-amber-300 bg-amber-50 px-2 py-2 text-xs text-amber-950">
+      <FlaskConical className="hidden size-4 shrink-0 sm:block" aria-hidden="true" />
       <span className="hidden font-medium 2xl:inline" title="Переключатель влияет только на интерфейс и не заменяет серверную авторизацию">
         Dev Session
       </span>
@@ -63,16 +63,16 @@ export function DevSwitcher() {
         </span>
       )}
       <form onSubmit={applyCompany} className="hidden items-center gap-1 lg:flex">
-        <Building2 className="size-3 text-amber-700" aria-hidden="true" />
+        <Building2 className="size-4 text-amber-700" aria-hidden="true" />
         <Input
           aria-label="ID компании"
-          className="h-7 w-14 border-amber-200 bg-white/80 px-1.5 text-center text-xs tabular-nums"
+          className="h-7 w-14 border-amber-200 bg-white/80 px-2 text-center text-xs tabular-nums"
           value={companyDraft}
           onChange={(event) => setCompanyDraft(event.target.value.replace(/[^0-9]/g, ''))}
           inputMode="numeric"
         />
-        <Button variant="ghost" size="sm" className="h-7 px-1.5 text-[11px]" type="submit" title="Применить company ID">
-          <ChevronDown className="size-3 -rotate-90" aria-hidden="true" />
+        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" type="submit" title="Применить company ID">
+          <ChevronDown className="size-4 -rotate-90" aria-hidden="true" />
           Применить
         </Button>
       </form>

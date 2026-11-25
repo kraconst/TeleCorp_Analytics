@@ -20,10 +20,10 @@ export function DisconnectedAccountsBanner({
       <div className="flex min-h-10 items-center justify-between gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900 lg:px-6">
         <span className="flex items-center gap-2">
           <AlertTriangle className="size-4 shrink-0" aria-hidden="true" />
-          Не удалось проверить состояние Telegram-аккаунтов{error ? `: ${error}` : '.'}
+          Не удалось проверить состояние Telegram-аккаунтов{error ? `: ${error}` : ''}
         </span>
         <Button variant="ghost" size="sm" className="h-7 px-2 text-amber-900" onClick={onRetry}>
-          <RefreshCw className="size-3.5" /> Повторить
+          <RefreshCw className="size-4" /> Повторить
         </Button>
       </div>
     );
@@ -41,7 +41,7 @@ export function DisconnectedAccountsBanner({
         </span>
       </span>
       <Button asChild variant="ghost" size="sm" className="h-7 px-2 text-red-800 hover:bg-red-100">
-        <Link to="/accounts">Проверить аккаунты <ArrowRight className="size-3.5" /></Link>
+        <Link to="/accounts">Проверить аккаунты <ArrowRight className="size-4" /></Link>
       </Button>
     </div>
   );

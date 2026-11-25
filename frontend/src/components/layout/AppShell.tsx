@@ -58,14 +58,14 @@ export function AppShell() {
 
   const navigationContent = (
     <>
-      <div className="flex h-16 items-center gap-3 border-b border-stone-200 px-4 lg:justify-center 2xl:justify-start">
-        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-blue-600 font-display text-xs font-bold tracking-tight text-white">TC</span>
-        <div className="min-w-0 lg:hidden 2xl:block">
-          <p className="truncate font-display text-sm font-bold tracking-tight text-stone-950">TeleCorp</p>
-          <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-stone-400">Analytics</p>
+      <div className="flex h-16 items-center gap-3 border-b border-stone-200 px-4">
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-blue-600 font-display text-xs font-medium text-white">TC</span>
+        <div className="min-w-0">
+          <p className="truncate font-display text-base font-medium text-stone-950">TeleCorp</p>
+          <p className="text-xs text-stone-500">Analytics</p>
         </div>
       </div>
-      <nav className="flex-1 space-y-1 overflow-y-auto p-3 lg:px-2 2xl:p-3" aria-label="Основная навигация">
+      <nav className="flex-1 space-y-1 overflow-y-auto p-3" aria-label="Основная навигация">
         {visibleNavigation.map((item) => (
           <NavLink
             key={item.to}
@@ -74,14 +74,14 @@ export function AppShell() {
             title={item.label}
             aria-label={item.label}
             className={({ isActive }) => cn(
-              'flex h-10 items-center gap-3 rounded-lg px-3 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-950 lg:justify-center lg:px-0 2xl:justify-start 2xl:px-3',
-              isActive && 'bg-blue-50 text-blue-700 shadow-[inset_3px_0_0_#2563eb] hover:bg-blue-50 hover:text-blue-700',
+              'flex h-9 items-center gap-3 rounded-lg px-3 text-sm font-medium text-stone-600 transition-colors hover:bg-stone-100 hover:text-stone-950',
+              isActive && 'bg-stone-100 text-stone-950 shadow-[inset_2px_0_0_#2563eb] hover:bg-stone-100 hover:text-stone-950',
             )}
           >
             <item.icon className="size-[18px] shrink-0" aria-hidden="true" />
-            <span className="lg:hidden 2xl:inline">{item.label}</span>
+            <span>{item.label}</span>
             {item.to === '/alerts' && visibleAlertCount > 0 && (
-              <span className="ml-auto min-w-5 rounded-full bg-red-100 px-1.5 py-0.5 text-center text-[10px] font-bold tabular-nums text-red-700 lg:absolute lg:ml-5 lg:-translate-y-3 2xl:ml-auto 2xl:translate-y-0">
+              <span className="ml-auto min-w-5 text-right text-xs font-medium tabular-nums text-red-700">
                 {visibleAlertCount}
               </span>
             )}
@@ -89,33 +89,33 @@ export function AppShell() {
         ))}
       </nav>
       {session.role === 'owner' && (
-        <div className="border-t border-stone-200 p-3 lg:p-2 2xl:p-3">
+        <div className="border-t border-stone-200 p-3">
           <button
-            className="flex h-10 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-sm text-stone-500 hover:bg-stone-100 hover:text-stone-900 lg:justify-center lg:px-0 2xl:justify-start 2xl:px-3"
+            className="flex h-9 w-full cursor-pointer items-center gap-3 rounded-lg px-3 text-left text-sm text-stone-500 transition-colors hover:bg-stone-100 hover:text-stone-900"
             onClick={() => setSettingsOpen(true)}
             title="Настройки компании"
           >
             <Settings className="size-[18px]" />
-            <span className="lg:hidden 2xl:inline">Настройки</span>
+            <span>Настройки</span>
           </button>
         </div>
       )}
-      <div className="m-3 rounded-lg border border-stone-200 bg-stone-50 p-3 lg:hidden 2xl:block">
-        <p className="flex items-center gap-2 text-[11px] font-medium text-stone-600"><ShieldCheck className="size-3.5" /> Данные в вашем контуре</p>
-        <p className="mt-1 text-[10px] leading-4 text-stone-400">Self-hosted рабочее пространство</p>
+      <div className="m-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
+        <p className="flex items-center gap-2 text-xs font-medium text-stone-600"><ShieldCheck className="size-4" /> Данные в вашем контуре</p>
+        <p className="mt-1 text-xs leading-4 text-stone-500">Self-hosted рабочее пространство</p>
       </div>
     </>
   );
 
   return (
     <div className="flex h-dvh overflow-hidden bg-[#f7f7f5] text-stone-800">
-      <aside className="relative hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex lg:w-16 2xl:w-60">
+      <aside className="relative hidden w-60 shrink-0 flex-col border-r border-stone-200 bg-white md:flex">
         {navigationContent}
       </aside>
       {mobileOpen && (
         <div className="fixed inset-0 z-50 bg-stone-950/30 md:hidden" onClick={() => setMobileOpen(false)}>
           <aside className="flex h-full w-72 flex-col bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
-            <button className="absolute right-3 top-4 z-10 rounded-md p-2 text-stone-500" onClick={() => setMobileOpen(false)} aria-label="Закрыть меню"><X className="size-5" /></button>
+            <button className="absolute right-3 top-4 z-10 rounded-lg p-2 text-stone-500" onClick={() => setMobileOpen(false)} aria-label="Закрыть меню"><X className="size-[18px]" /></button>
             {navigationContent}
           </aside>
         </div>
@@ -123,10 +123,10 @@ export function AppShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-stone-200 bg-white px-4 lg:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Открыть меню"><Menu className="size-5" /></Button>
+            <Button variant="ghost" size="icon" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Открыть меню"><Menu className="size-[18px]" /></Button>
             <div className="min-w-0">
-              <h1 className="truncate font-display text-sm font-semibold text-stone-900 sm:text-base">{pageTitles[location.pathname] ?? 'TeleCorp Analytics'}</h1>
-              <p className="hidden truncate text-[11px] text-stone-400 sm:block">{company.data?.name ?? `Компания #${session.companyId}`}</p>
+              <h1 className="truncate font-display text-sm font-medium text-stone-900 sm:text-base">{pageTitles[location.pathname] ?? 'TeleCorp Analytics'}</h1>
+              <p className="hidden truncate text-xs text-stone-500 sm:block">{company.data?.name ?? `Компания #${session.companyId}`}</p>
             </div>
           </div>
           <DevSwitcher />

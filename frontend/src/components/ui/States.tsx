@@ -27,10 +27,10 @@ interface StatePanelProps {
 export function EmptyState({ title, description, icon: Icon = SearchX, action, className }: StatePanelProps) {
   return (
     <div className={cn('flex flex-col items-center justify-center px-6 py-10 text-center', className)}>
-      <span className="mb-3 rounded-lg border border-stone-200 bg-stone-50 p-2.5 text-stone-500">
-        <Icon className="size-5" aria-hidden="true" />
+      <span className="mb-3 rounded-lg border border-stone-200 bg-stone-50 p-3 text-stone-500">
+        <Icon className="size-[18px]" aria-hidden="true" />
       </span>
-      <h3 className="font-display text-sm font-semibold text-stone-800">{title}</h3>
+      <h3 className="font-display text-sm font-medium text-stone-800">{title}</h3>
       <p className="mt-1 max-w-sm text-sm leading-5 text-stone-500">{description}</p>
       {action && <div className="mt-4">{action}</div>}
     </div>
@@ -49,7 +49,7 @@ export function ErrorState({
   className?: string;
 }) {
   return (
-    <div className={cn('rounded-lg border border-red-200 bg-red-50 p-4 text-red-800', className)} role="alert">
+    <div className={cn('rounded-xl border border-red-200 bg-red-50 p-4 text-red-800', className)} role="alert">
       <div className="flex items-start gap-3">
         <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         <div className="min-w-0 flex-1">

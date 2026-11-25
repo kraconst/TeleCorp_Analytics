@@ -43,20 +43,20 @@ export function ChatsToolbar({
   return (
     <div className="flex min-h-14 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-stone-200 bg-white px-3 py-2 sm:px-4">
       <div className="flex items-center gap-2">
-        <div className="flex rounded-lg border border-stone-200 bg-stone-50 p-1" aria-label="Представление чатов">
-          <Button variant={view === 'split' ? 'secondary' : 'ghost'} size="sm" className="h-7 border-0 px-2.5" onClick={() => onViewChange('split')} aria-pressed={view === 'split'}>
-            <List className="size-3.5" /> Список
+        <div className="flex rounded-xl border border-stone-200 bg-stone-50 p-1" aria-label="Представление чатов">
+          <Button variant={view === 'split' ? 'secondary' : 'ghost'} size="sm" className="h-7 border-0 px-3" onClick={() => onViewChange('split')} aria-pressed={view === 'split'}>
+            <List className="size-4" /> Список
           </Button>
-          <Button variant={view === 'kanban' ? 'secondary' : 'ghost'} size="sm" className="h-7 border-0 px-2.5" onClick={() => onViewChange('kanban')} aria-pressed={view === 'kanban'}>
-            <Columns3 className="size-3.5" /> Канбан
+          <Button variant={view === 'kanban' ? 'secondary' : 'ghost'} size="sm" className="h-7 border-0 px-3" onClick={() => onViewChange('kanban')} aria-pressed={view === 'kanban'}>
+            <Columns3 className="size-4" /> Канбан
           </Button>
         </div>
-        <span className="hidden text-xs tabular-nums text-stone-400 sm:inline">{chats.length} чатов</span>
+        <span className="hidden text-xs tabular-nums text-stone-500 sm:inline">{chats.length} чатов</span>
       </div>
-      <div className="flex items-center gap-1.5">
-        {hasFilters && <Button variant="ghost" size="sm" onClick={onReset}><RotateCcw className="size-3.5" /> Сбросить</Button>}
+      <div className="flex items-center gap-2">
+        {hasFilters && <Button variant="ghost" size="sm" onClick={onReset}><RotateCcw className="size-4" /> Сбросить</Button>}
         <Button variant="secondary" size="sm" onClick={exportChats} disabled={chats.length === 0}>
-          <Download className="size-3.5" /> CSV
+          <Download className="size-4" /> CSV
         </Button>
       </div>
     </div>

@@ -68,7 +68,7 @@ export function ChatsWorkspacePage() {
   }, [filters.view, filters.chatId, filtered, updateParams]);
 
   if (!enabled) {
-    return <EmptyState icon={UserRoundCheck} title="Выберите сотрудника" description="Для просмотра чатов в роли manager выберите сотрудника в Dev Session сверху." className="h-full" />;
+    return <EmptyState icon={UserRoundCheck} title="Выберите сотрудника" description="Для просмотра чатов в роли manager выберите сотрудника в Dev Session сверху" className="h-full" />;
   }
 
   const resetFilters = () => setSearchParams(filters.view === 'kanban' ? { view: 'kanban' } : {});
@@ -85,7 +85,7 @@ export function ChatsWorkspacePage() {
       />
       {directoryError && (
         <div className="flex shrink-0 items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800" role="alert">
-          <AlertCircle className="size-3.5" /> Часть справочников недоступна: {directoryError.message}. Показаны доступные данные.
+          <AlertCircle className="size-4" /> Часть справочников недоступна: {directoryError.message}. Показаны доступные данные.
         </div>
       )}
       {filters.unanswered && companyQuery.isError && (
@@ -97,7 +97,7 @@ export function ChatsWorkspacePage() {
         </div>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1">
-          <div className={`${filters.chatId ? 'hidden md:flex' : 'flex'} h-full w-full shrink-0 border-r border-stone-200 md:w-[340px]`}>
+          <div className={`${filters.chatId ? 'hidden lg:flex' : 'flex'} h-full w-full shrink-0 border-r border-stone-200 lg:w-[320px] xl:w-[360px]`}>
             <ChatListColumn
               chats={filtered}
               filters={{ ...filters, employeeId }}
@@ -120,7 +120,7 @@ export function ChatsWorkspacePage() {
             onOpenDetails={() => setDetailsOpen(true)}
             onBack={() => updateParams({ chat_id: undefined })}
           />
-          <aside className="hidden h-full w-[380px] shrink-0 border-l border-stone-200 bg-white xl:block">
+          <aside className="hidden h-full w-[360px] shrink-0 border-l border-stone-200 bg-white min-[1440px]:block">
             <ChatRightPanel companyId={session.companyId} chatId={filters.chatId} allChats={allEnriched} />
           </aside>
           <Dialog open={detailsOpen} onOpenChange={setDetailsOpen} title="Детали чата" description="Саммари, контакт и аналитика" side="right">

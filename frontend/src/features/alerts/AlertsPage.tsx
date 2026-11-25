@@ -27,26 +27,26 @@ function AlertCard({ alert, chat, resolvedAt, onResolve, isResolving }: {
   const now = useSharedNow();
   const type = getStatusMeta(alertTypeConfig, alert.type, 'Неизвестный алерт');
   return (
-    <article className="rounded-lg border border-stone-200 bg-white p-4 transition-colors hover:border-stone-300">
+    <article className="rounded-xl border border-stone-200 bg-white p-4 transition-colors hover:border-stone-300">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
         <span className={`mt-0.5 rounded-lg border p-2 ${type.className}`}><AlertTriangle className="size-4" /></span>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <Badge className={type.className}>{type.label}</Badge>
-            <span className="text-[11px] tabular-nums text-stone-400">Алерт #{alert.id}</span>
-            {resolvedAt && <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700"><CheckCheck className="size-3" /> Обработан</Badge>}
+            <span className="text-xs tabular-nums text-stone-500">Алерт #{alert.id}</span>
+            {resolvedAt && <Badge className="border-emerald-200 bg-emerald-50 text-emerald-700"><CheckCheck className="size-4" /> Обработан</Badge>}
           </div>
-          <h2 className="mt-2 text-sm font-semibold text-stone-900">{chat ? contactDisplayName(chat) : `Чат #${alert.chat_id}`}</h2>
+          <h2 className="mt-2 text-sm font-medium text-stone-900">{chat ? contactDisplayName(chat) : `Чат #${alert.chat_id}`}</h2>
           <p className="mt-1 text-xs leading-5 text-stone-500">{type.description}</p>
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-stone-400">
-            <span className="flex items-center gap-1"><Clock3 className="size-3" /> {formatRelativeTime(resolvedAt ?? alert.created_at, now)}</span>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-stone-500">
+            <span className="flex items-center gap-1"><Clock3 className="size-4" /> {formatRelativeTime(resolvedAt ?? alert.created_at, now)}</span>
             {chat && <span>{chat.employee?.name || chat.account?.employee_name || 'Сотрудник не найден'} · {displayUsername(chat.account?.username)}</span>}
             {chat && <Badge className={getStatusMeta(chatStatusConfig, chat.status, 'Неизвестный статус').className}>{getStatusMeta(chatStatusConfig, chat.status, 'Неизвестный статус').label}</Badge>}
           </div>
         </div>
         <div className="flex shrink-0 gap-2 sm:self-center">
-          {chat && <Button asChild variant="secondary" size="sm"><Link to={`/chats?view=split&chat_id=${chat.id}`}>Открыть чат <ArrowRight className="size-3.5" /></Link></Button>}
-          {!resolvedAt && onResolve && <Button variant="subtle" size="sm" onClick={onResolve} disabled={isResolving}><Check className="size-3.5" /> {isResolving ? 'Закрываем…' : 'Обработано'}</Button>}
+          {chat && <Button asChild variant="secondary" size="sm"><Link to={`/chats?view=split&chat_id=${chat.id}`}>Открыть чат <ArrowRight className="size-4" /></Link></Button>}
+          {!resolvedAt && onResolve && <Button variant="subtle" size="sm" onClick={onResolve} disabled={isResolving}><Check className="size-4" /> {isResolving ? 'Закрываем…' : 'Обработано'}</Button>}
         </div>
       </div>
     </article>
@@ -111,9 +111,9 @@ export function AlertsPage() {
     <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
       <section className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-blue-600">Операционная очередь</p>
-          <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight text-stone-950">Требуют решения</h2>
-          <p className="mt-1 text-sm text-stone-500">Не журнал событий, а конкретные диалоги, которым нужно внимание.</p>
+          <p className="text-xs font-medium text-blue-600">Операционная очередь</p>
+          <h2 className="mt-1 font-display text-3xl font-medium text-stone-950">Требуют решения</h2>
+          <p className="mt-1 text-sm text-stone-500">Не журнал событий, а конкретные диалоги, которым нужно внимание</p>
         </div>
         <Select aria-label="Фильтр по типу алерта" value={selectedType ?? ''} onChange={(event) => setParam('type', event.target.value || undefined)}>
           <option value="">Все типы</option>
@@ -121,8 +121,8 @@ export function AlertsPage() {
         </Select>
       </section>
       <div className="flex items-center gap-1 border-b border-stone-200">
-        <button className={`cursor-pointer border-b-2 px-4 py-2.5 text-sm font-medium ${tab === 'active' ? 'border-blue-600 text-blue-700' : 'border-transparent text-stone-500'}`} onClick={() => setParam('tab', undefined)}>Активные <span className="ml-1 tabular-nums">{activeAlerts.length}</span></button>
-        <button className={`cursor-pointer border-b-2 px-4 py-2.5 text-sm font-medium ${tab === 'resolved' ? 'border-blue-600 text-blue-700' : 'border-transparent text-stone-500'}`} onClick={() => setParam('tab', 'resolved')}>Обработанные в сессии <span className="ml-1 tabular-nums">{sessionResolved.length}</span></button>
+        <button className={`cursor-pointer border-b-2 px-4 py-3 text-sm font-medium ${tab === 'active' ? 'border-blue-600 text-blue-700' : 'border-transparent text-stone-500'}`} onClick={() => setParam('tab', undefined)}>Активные <span className="ml-1 tabular-nums">{activeAlerts.length}</span></button>
+        <button className={`cursor-pointer border-b-2 px-4 py-3 text-sm font-medium ${tab === 'resolved' ? 'border-blue-600 text-blue-700' : 'border-transparent text-stone-500'}`} onClick={() => setParam('tab', 'resolved')}>Обработанные в сессии <span className="ml-1 tabular-nums">{sessionResolved.length}</span></button>
       </div>
       {tab === 'resolved' && <p className="rounded-lg border border-stone-200 bg-stone-100 px-4 py-3 text-xs leading-5 text-stone-500">Этот список хранится только в текущей вкладке до перезагрузки. Серверный архив закрытых алертов пока не доступен.</p>}
       {tab === 'active' && alertsQuery.isError ? (
@@ -132,7 +132,7 @@ export function AlertsPage() {
       ) : tab === 'active' && activeAlerts.length === 0 ? (
         <EmptyState icon={Inbox} title="Активных алертов нет" description={selectedType ? 'По выбранному типу проблем не найдено. Измените фильтр.' : 'Очередь разобрана. Новые риски появятся здесь после их обнаружения сервером.'} />
       ) : tab === 'resolved' && currentResolved.length === 0 ? (
-        <EmptyState icon={CheckCheck} title="В этой сессии пока ничего не закрыто" description="Обработанные алерты появятся здесь и останутся доступны до перезагрузки страницы." />
+        <EmptyState icon={CheckCheck} title="В этой сессии пока ничего не закрыто" description="Обработанные алерты появятся здесь и останутся доступны до перезагрузки страницы" />
       ) : (
         <div className="space-y-3">
           {tab === 'active' ? activeAlerts.map((alert) => (
@@ -140,7 +140,7 @@ export function AlertsPage() {
           )) : currentResolved.map(({ alert, resolvedAt }) => <AlertCard key={alert.id} alert={alert} chat={chatMap.get(alert.chat_id)} resolvedAt={resolvedAt} />)}
         </div>
       )}
-      {session.role === 'manager' && !employeeId && <p className="flex items-center gap-2 text-xs text-amber-700"><BellRing className="size-3.5" /> Выберите сотрудника в Dev Session, чтобы увидеть только его алерты.</p>}
+      {session.role === 'manager' && !employeeId && <p className="flex items-center gap-2 text-xs text-amber-700"><BellRing className="size-4" /> Выберите сотрудника в Dev Session, чтобы увидеть только его алерты</p>}
     </div>
   );
 }
