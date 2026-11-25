@@ -62,6 +62,9 @@ func (m *mockChatRepoStub) ListByCompany(ctx context.Context, companyID int64, s
 func (m *mockChatRepoStub) UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error {
 	return nil
 }
+func (m *mockChatRepoStub) UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error {
+	return nil
+}
 
 type mockSummaryRepoStub struct {
 	upsert func(ctx context.Context, summary domain.ChatSummary) error

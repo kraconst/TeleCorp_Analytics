@@ -60,6 +60,7 @@ type ChatRepository interface {
 	GetByID(ctx context.Context, id int64) (*domain.Chat, error)
 	ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
 	UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
+	UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error
 }
 
 // AccountDailyStatsRepository определяет контракт доступа к дневной аналитике аккаунтов.
@@ -75,6 +76,8 @@ type AccountDailyStatsRepository interface {
 // AlertRepository хранит уведомления и ограничивает операции компанией.
 type AlertRepository interface {
 	Create(ctx context.Context, alert domain.Alert) (int64, error)
+	ExistsActive(ctx context.Context, chatID int64, alertType domain.AlertType) (bool, error)
+	FindExpiredNoReplyChats(ctx context.Context) ([]domain.NoReplyChat, error)
 	ListActiveByCompany(ctx context.Context, companyID int64) ([]domain.Alert, error)
 	Resolve(ctx context.Context, companyID, id int64) error
 }
@@ -83,4 +86,15 @@ type AlertRepository interface {
 type ChatSummaryRepository interface {
 	Upsert(ctx context.Context, summary domain.ChatSummary) error
 	GetByChatID(ctx context.Context, companyID, chatID int64) (*domain.ChatSummary, error)
+}
+
+// AIAnalysisResult представляет структурированный результат AI-анализа переписки.
+type AIAnalysisResult struct {
+	Topic           string             `json:"topic"`
+	Agreements      string             `json:"agreements"`
+	NextStep        string             `json:"next_step"`
+	OpenQuestions   string             `json:"open_questions"`
+	Risk            domain.RiskLevel   `json:"risk"`
+	SuggestedStatus *domain.ChatStatus `json:"suggested_status,omitempty"`
+	AlertTypes      []domain.AlertType `json:"alert_types,omitempty"`
 }

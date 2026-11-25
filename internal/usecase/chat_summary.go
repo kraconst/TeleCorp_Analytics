@@ -9,10 +9,14 @@ import (
 	"github.com/kraconst/GO_server/internal/domain"
 )
 
+// AIAnalysisHandler обрабатывает результаты AI-анализа (автостатусы и алерты).
+type AIAnalysisHandler func(ctx context.Context, companyID, chatID int64, result *AIAnalysisResult) error
+
 type ChatSummaryUsecase struct {
-	summaries ChatSummaryRepository
-	chats     ChatRepository
-	accounts  AccountRepository
+	summaries         ChatSummaryRepository
+	chats             ChatRepository
+	accounts          AccountRepository
+	onAnalysisApplied AIAnalysisHandler
 }
 
 func NewChatSummaryUsecase(summaries ChatSummaryRepository, chats ChatRepository, accounts AccountRepository) *ChatSummaryUsecase {
@@ -21,6 +25,28 @@ func NewChatSummaryUsecase(summaries ChatSummaryRepository, chats ChatRepository
 		chats:     chats,
 		accounts:  accounts,
 	}
+}
+
+// SetAnalysisHandler регистрирует обработчик результата AI-анализа.
+func (u *ChatSummaryUsecase) SetAnalysisHandler(fn AIAnalysisHandler) {
+	u.onAnalysisApplied = fn
+}
+
+// ApplyAnalysisResult передаёт результат AI-анализа зарегистрированному обработчику автостатусов и алертов.
+func (u *ChatSummaryUsecase) ApplyAnalysisResult(ctx context.Context, companyID, chatID int64, result *AIAnalysisResult) error {
+	if companyID <= 0 {
+		return fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
+	if chatID <= 0 {
+		return fmt.Errorf("%w: invalid chat_id", domain.ErrValidation)
+	}
+	if result == nil {
+		return fmt.Errorf("%w: analysis result is required", domain.ErrValidation)
+	}
+	if u.onAnalysisApplied == nil {
+		return nil
+	}
+	return u.onAnalysisApplied(ctx, companyID, chatID, result)
 }
 
 func (u *ChatSummaryUsecase) Upsert(ctx context.Context, companyID int64, summary domain.ChatSummary) error {

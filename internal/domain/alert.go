@@ -21,3 +21,9 @@ type Alert struct {
 	CreatedAt  time.Time  `json:"created_at" db:"created_at"`
 	ResolvedAt *time.Time `json:"resolved_at" db:"resolved_at"`
 }
+
+// NoReplyChat описывает просроченный диалог без ответа, для которого требуется создать no_reply-алерт.
+type NoReplyChat struct {
+	CompanyID int64 `db:"company_id"`
+	ChatID    int64 `db:"chat_id"`
+}

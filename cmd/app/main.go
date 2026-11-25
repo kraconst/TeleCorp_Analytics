@@ -5,8 +5,8 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -15,6 +15,38 @@ import (
 	"github.com/kraconst/GO_server/internal/storage/postgres"
 	"github.com/kraconst/GO_server/internal/usecase"
 )
+
+type noReplyAlertChecker interface {
+	CheckNoReplyAlerts(ctx context.Context) (int, error)
+}
+
+func runNoReplyAlertWorker(ctx context.Context, checker noReplyAlertChecker, interval time.Duration) {
+	if checker == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = config.DefaultAlertCheckInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			created, err := checker.CheckNoReplyAlerts(checkCtx)
+			cancel()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("No-reply alert check error: %v", err)
+			} else if created > 0 {
+				log.Printf("Created %d no-reply alert(s)", created)
+			}
+		}
+	}
+}
 
 func main() {
 	cfg := config.Must()
@@ -52,6 +84,7 @@ func main() {
 	alertUsecase := usecase.NewAlertUsecase(alertRepo, chatRepo, accountRepo)
 	companyUsecase := usecase.NewCompanyUsecase(companyRepo)
 	summaryUsecase := usecase.NewChatSummaryUsecase(summaryRepo, chatRepo, accountRepo)
+	summaryUsecase.SetAnalysisHandler(alertUsecase.ApplyAIAnalysis)
 	userUsecase := usecase.NewUserUsecase(userRepo, employeeRepo)
 
 	h := handler.New(
@@ -75,6 +108,18 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
+	workerCtx, stopWorker := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stopWorker()
+
+	var workerWG sync.WaitGroup
+	workerWG.Add(1)
+	go func() {
+		defer workerWG.Done()
+		log.Printf("No-reply alert worker started (interval=%s)", cfg.Alerts.CheckInterval)
+		runNoReplyAlertWorker(workerCtx, alertUsecase, cfg.Alerts.CheckInterval)
+		log.Println("No-reply alert worker stopped")
+	}()
+
 	go func() {
 		log.Printf("Server listening on %s", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -82,10 +127,8 @@ func main() {
 		}
 	}()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-quit
-	log.Printf("Shutting down server on signal: %v...", sig)
+	<-workerCtx.Done()
+	log.Println("Shutting down server on signal...")
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -93,5 +136,6 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
+	workerWG.Wait()
 	log.Println("Server gracefully stopped")
 }

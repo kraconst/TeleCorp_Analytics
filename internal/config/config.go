@@ -2,8 +2,12 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"time"
 )
+
+const DefaultAlertCheckInterval = time.Minute
 
 type DBConfig struct {
 	Host     string
@@ -19,9 +23,14 @@ func (c DBConfig) DSN() string {
 		c.User, c.Password, c.Host, c.Port, c.Name, c.SSLMode)
 }
 
+type AlertConfig struct {
+	CheckInterval time.Duration
+}
+
 type Config struct {
-	Addr string
-	DB   DBConfig
+	Addr   string
+	DB     DBConfig
+	Alerts AlertConfig
 }
 
 func Must() Config {
@@ -35,6 +44,9 @@ func Must() Config {
 			Name:     getEnv("DB_NAME", "telecorp_db"),
 			SSLMode:  getEnv("DB_SSLMODE", "disable"),
 		},
+		Alerts: AlertConfig{
+			CheckInterval: getDurationEnv("ALERT_CHECK_INTERVAL", DefaultAlertCheckInterval),
+		},
 	}
 }
 
@@ -43,4 +55,17 @@ func getEnv(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func getDurationEnv(key string, fallback time.Duration) time.Duration {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(val)
+	if err != nil || d <= 0 {
+		log.Printf("Invalid %s=%q, using default %s", key, val, fallback)
+		return fallback
+	}
+	return d
 }

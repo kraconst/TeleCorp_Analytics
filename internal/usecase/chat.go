@@ -78,6 +78,23 @@ func (u *ChatUsecase) SetManualStatus(ctx context.Context, companyID, chatID int
 	return u.chats.UpdateStatus(ctx, chatID, status, domain.StatusSourceManual)
 }
 
+func (u *ChatUsecase) UpdateAutoStatus(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) error {
+	if companyID <= 0 {
+		return fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
+	if chatID <= 0 {
+		return fmt.Errorf("%w: invalid chat_id", domain.ErrValidation)
+	}
+	if !isValidChatStatus(status) {
+		return fmt.Errorf("%w: invalid chat status '%s'", domain.ErrValidation, status)
+	}
+	if _, err := u.GetByID(ctx, companyID, chatID); err != nil {
+		return err
+	}
+
+	return u.chats.UpdateAutoStatus(ctx, chatID, status)
+}
+
 func (u *ChatUsecase) ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error) {
 	if companyID <= 0 {
 		return nil, fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
