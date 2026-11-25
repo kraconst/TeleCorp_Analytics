@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -233,6 +234,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	// Chat Summaries
 	r.GET("/chats/:id/summary", h.GetChatSummary)
 	r.POST("/chats/:id/summary", h.UpsertChatSummary)
+	r.POST("/chats/:id/summary/generate", h.GenerateChatSummary)
 
 	// Contacts
 	r.GET("/contacts", h.ListContacts)
@@ -288,6 +290,17 @@ func handleUsecaseError(c *gin.Context, err error, notFoundMsg string) {
 			msg = notFoundMsg
 		}
 		c.JSON(http.StatusNotFound, gin.H{"error": msg})
+		return
+	}
+	// 503/502: фиксированное тело без err.Error(), чтобы не раскрывать ответ внешнего провайдера (RFC 02, D5/D7).
+	if errors.Is(err, domain.ErrUnavailable) {
+		_ = c.Error(err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "service unavailable"})
+		return
+	}
+	if errors.Is(err, domain.ErrBadGateway) {
+		_ = c.Error(err)
+		c.JSON(http.StatusBadGateway, gin.H{"error": "bad gateway"})
 		return
 	}
 	_ = c.Error(err)
@@ -1190,6 +1203,57 @@ func (h *Handler) UpsertChatSummary(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"status": "saved"})
+}
+
+// GenerateChatSummary строит AI-саммари чата (RFC 02, п.4.1). Request body игнорируется.
+// force: отсутствует → false; ровно одно значение "true"/"false"; иное (в т.ч. пустое) → 400.
+func (h *Handler) GenerateChatSummary(c *gin.Context) {
+	chatID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || chatID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "id must be a positive number"})
+		return
+	}
+
+	query, err := url.ParseQuery(c.Request.URL.RawQuery)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid query parameters"})
+		return
+	}
+
+	force := false
+	if vals, ok := query["force"]; ok {
+		if len(vals) != 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "force must be true or false"})
+			return
+		}
+		switch vals[0] {
+		case "true":
+			force = true
+		case "false":
+			force = false
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "force must be true or false"})
+			return
+		}
+	}
+
+	companyID, err := parseCompanyID(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
+		return
+	}
+
+	if h.summaryUsecase == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "summary service unavailable"})
+		return
+	}
+
+	summary, err := h.summaryUsecase.Generate(c.Request.Context(), companyID, chatID, force)
+	if err != nil {
+		handleUsecaseError(c, err, "chat not found")
+		return
+	}
+	c.JSON(http.StatusOK, summary)
 }
 
 // --- Users ---

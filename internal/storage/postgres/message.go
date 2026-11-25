@@ -61,3 +61,37 @@ func (s *MessageStorage) ListByChat(ctx context.Context, companyID, chatID int64
 	}
 	return messages, nil
 }
+
+// ListLatestByChat returns at most limit latest messages of the company's chat
+// in chronological order. The latest rows are selected by (sent_at DESC, id DESC)
+// and then re-ordered ascending. A chat of another company or a chat without
+// messages yields an empty non-nil slice.
+func (s *MessageStorage) ListLatestByChat(ctx context.Context, companyID, chatID int64, limit int) ([]domain.Message, error) {
+	if companyID <= 0 {
+		return nil, fmt.Errorf("%w: company id must be positive", domain.ErrValidation)
+	}
+	if chatID <= 0 {
+		return nil, fmt.Errorf("%w: chat id must be positive", domain.ErrValidation)
+	}
+	if limit <= 0 {
+		return nil, fmt.Errorf("%w: limit must be positive", domain.ErrValidation)
+	}
+	query := `
+		SELECT latest.id, latest.chat_id, latest.telegram_message_id, latest.direction, latest.text, latest.media_type, latest.sent_at
+		FROM (
+			SELECT m.id, m.chat_id, m.telegram_message_id, m.direction, m.text, m.media_type, m.sent_at
+			FROM messages m
+			JOIN chats c ON c.id = m.chat_id
+			JOIN accounts a ON a.id = c.account_id
+			WHERE m.chat_id = $1 AND a.company_id = $2
+			ORDER BY m.sent_at DESC, m.id DESC
+			LIMIT $3
+		) AS latest
+		ORDER BY latest.sent_at ASC, latest.id ASC
+	`
+	messages := make([]domain.Message, 0)
+	if err := s.db.SelectContext(ctx, &messages, query, chatID, companyID, limit); err != nil {
+		return nil, mapPgError(fmt.Errorf("list latest messages by chat: %w", err))
+	}
+	return messages, nil
+}
