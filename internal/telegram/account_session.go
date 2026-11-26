@@ -67,15 +67,22 @@ func (s *AccountSessionStorage) LoadSession(ctx context.Context) ([]byte, error)
 }
 
 func (s *AccountSessionStorage) StoreSession(ctx context.Context, data []byte) error {
-	if len(data) == 0 {
-		return fmt.Errorf("%w: cannot store an empty Telegram session", domain.ErrValidation)
+	encrypted, err := s.seal(data)
+	if err != nil {
+		return err
 	}
-	aad := s.associatedData()
-	encrypted := s.cipher.Seal([]byte{accountSessionVersion}, nil, data, aad[:])
 	if err := s.accounts.UpdateSession(ctx, s.companyID, s.accountID, encrypted); err != nil {
 		return fmt.Errorf("store account session: %w", err)
 	}
 	return nil
+}
+
+func (s *AccountSessionStorage) seal(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("%w: cannot store an empty Telegram session", domain.ErrValidation)
+	}
+	aad := s.associatedData()
+	return s.cipher.Seal([]byte{accountSessionVersion}, nil, data, aad[:]), nil
 }
 
 func (s *AccountSessionStorage) associatedData() [17]byte {

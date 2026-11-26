@@ -79,16 +79,34 @@ func (s *SyncClient) WithAccount(ctx context.Context, companyID, accountID int64
 	if err != nil {
 		return err
 	}
+	data, err := s.runSavedSession(ctx, raw, func(ctx context.Context, self *tg.User, api *tg.Client) error {
+		return fn(ctx, &accountReader{api: api, limit: s.limit, selfID: self.ID})
+	})
+	if err != nil {
+		if ctx.Err() == nil {
+			if status := rejectedSessionStatus(err); status != "" {
+				return s.recordSessionFailure(ctx, companyID, accountID, status, err)
+			}
+		}
+		return err
+	}
+	if bytes.Equal(data, raw) {
+		return nil
+	}
+	return storage.StoreSession(ctx, data)
+}
+
+func (s *SyncClient) runSavedSession(ctx context.Context, raw []byte, fn func(context.Context, *tg.User, *tg.Client) error) ([]byte, error) {
 	// gotd may save a freshly created auth key before Self returns. Buffer all
 	// writes until this run verified the session and completed successfully.
 	buffer := &session.StorageMemory{}
 	if err := buffer.StoreSession(ctx, raw); err != nil {
-		return fmt.Errorf("buffer Telegram session: %w", err)
+		return nil, fmt.Errorf("buffer Telegram session: %w", err)
 	}
 	loader := &session.Loader{Storage: buffer}
 	key, err := loadSavedAuthKey(ctx, loader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	client := gotd.NewClient(s.apiID, s.apiHash, gotd.Options{
 		SessionStorage: buffer,
@@ -108,39 +126,29 @@ func (s *SyncClient) WithAccount(ctx context.Context, companyID, accountID int64
 		if err := verifySavedAuthKey(runCtx, loader, key); err != nil {
 			return err
 		}
-		reader := &accountReader{api: client.API(), limit: s.limit, selfID: self.ID}
-		if err := fn(runCtx, reader); err != nil {
+		if err := fn(runCtx, self, client.API()); err != nil {
 			return err
 		}
 		completed = true
 		return nil
 	})
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return nil, ctx.Err()
 	}
 	if err != nil {
-		if status := rejectedSessionStatus(err); status != "" {
-			return s.recordSessionFailure(ctx, companyID, accountID, status, err)
-		}
-		return fmt.Errorf("run Telegram sync: %w", err)
+		return nil, fmt.Errorf("run Telegram session: %w", err)
 	}
 	if !completed {
-		return errors.New("Telegram connection closed before sync completed")
+		return nil, errors.New("Telegram connection closed before work completed")
 	}
 	if err := verifySavedAuthKey(ctx, loader, key); err != nil {
-		if errors.Is(err, usecase.ErrTelegramSessionInvalid) {
-			return s.recordSessionFailure(ctx, companyID, accountID, domain.StatusDisconnected, err)
-		}
-		return err
+		return nil, err
 	}
 	data, err := buffer.LoadSession(ctx)
 	if err != nil {
-		return fmt.Errorf("read updated Telegram session: %w", err)
+		return nil, fmt.Errorf("read updated Telegram session: %w", err)
 	}
-	if bytes.Equal(data, raw) {
-		return nil
-	}
-	return storage.StoreSession(ctx, data)
+	return data, nil
 }
 
 func verifySavedAuthKey(ctx context.Context, loader *session.Loader, original crypto.Key) error {
