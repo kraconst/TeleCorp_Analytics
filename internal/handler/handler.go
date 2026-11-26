@@ -26,6 +26,7 @@ type Handler struct {
 	companyUsecase           *usecase.CompanyUsecase
 	summaryUsecase           *usecase.ChatSummaryUsecase
 	userUsecase              *usecase.UserUsecase
+	accountSync              AccountSyncService
 	demoAlerts               *demoAlertStore
 }
 
@@ -207,6 +208,7 @@ func (h *Handler) InitRoutes() *gin.Engine {
 	r.GET("/accounts/:id", h.GetByID)
 	r.POST("/accounts", h.Create)
 	r.POST("/accounts/:id/assign", h.AssignEmployee)
+	r.POST("/accounts/:id/sync", h.SyncAccount)
 
 	// Employees
 	r.GET("/employees", h.ListEmployees)
