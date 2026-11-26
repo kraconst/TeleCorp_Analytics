@@ -19,6 +19,10 @@ func NewMessageStorage(db *sqlx.DB) *MessageStorage {
 }
 
 func (s *MessageStorage) Create(ctx context.Context, msg domain.Message) (int64, error) {
+	return insertMessage(ctx, s.db, msg)
+}
+
+func insertMessage(ctx context.Context, db sqlx.QueryerContext, msg domain.Message) (int64, error) {
 	query := `
 		INSERT INTO messages (chat_id, telegram_message_id, direction, text, media_type, sent_at)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -26,7 +30,7 @@ func (s *MessageStorage) Create(ctx context.Context, msg domain.Message) (int64,
 		RETURNING id
 	`
 	var id int64
-	err := s.db.QueryRowContext(ctx, query,
+	err := db.QueryRowxContext(ctx, query,
 		msg.ChatID,
 		msg.TelegramMessageID,
 		msg.Direction,

@@ -47,6 +47,10 @@ func (s *AccountDailyStatsStorage) Upsert(ctx context.Context, stats domain.Acco
 }
 
 func (s *AccountDailyStatsStorage) IncrementCounters(ctx context.Context, accountID int64, day time.Time, messagesIn, messagesOut, newContacts int) error {
+	return incrementAccountDailyStats(ctx, s.db, accountID, day, messagesIn, messagesOut, newContacts)
+}
+
+func incrementAccountDailyStats(ctx context.Context, db sqlx.ExecerContext, accountID int64, day time.Time, messagesIn, messagesOut, newContacts int) error {
 	query := `
 		INSERT INTO account_daily_stats (account_id, day, messages_in, messages_out, active_chats, new_contacts, avg_response_time)
 		VALUES ($1, $2, $3, $4, 0, $5, 0)
@@ -56,7 +60,7 @@ func (s *AccountDailyStatsStorage) IncrementCounters(ctx context.Context, accoun
 			messages_out = account_daily_stats.messages_out + EXCLUDED.messages_out,
 			new_contacts = account_daily_stats.new_contacts + EXCLUDED.new_contacts
 	`
-	_, err := s.db.ExecContext(ctx, query,
+	_, err := db.ExecContext(ctx, query,
 		accountID,
 		day.Format("2006-01-02"),
 		messagesIn,

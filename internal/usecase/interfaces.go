@@ -54,6 +54,26 @@ type TelegramSyncClient interface {
 	WithAccount(ctx context.Context, companyID, accountID int64, fn func(context.Context, TelegramAccountReader) error) error
 }
 
+// SyncAccountRef identifies an account without exposing its session.
+type SyncAccountRef struct {
+	CompanyID int64 `db:"company_id"`
+	AccountID int64 `db:"id"`
+}
+
+type SyncDialogResult struct {
+	ChatID      int64
+	NewMessages int
+}
+
+// SyncRepository persists a complete dialog change atomically. The network
+// reader runs outside the transaction and may safely retry a committed batch.
+type SyncRepository interface {
+	ListSyncAccounts(ctx context.Context) ([]SyncAccountRef, error)
+	SyncAccountStatus(ctx context.Context, companyID, accountID int64) (domain.AccountStatus, error)
+	DialogCheckpoint(ctx context.Context, companyID, accountID, telegramUserID int64) (int64, error)
+	ImportDialog(ctx context.Context, companyID, accountID int64, dialog TelegramDialog, messages []domain.Message) (SyncDialogResult, error)
+}
+
 // EmployeeRepository определяет контракт доступа к данным сотрудников.
 type EmployeeRepository interface {
 	Create(ctx context.Context, emp domain.Employee) (int64, error)
