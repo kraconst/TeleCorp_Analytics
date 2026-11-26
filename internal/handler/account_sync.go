@@ -61,13 +61,17 @@ func (h *Handler) SyncAccount(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "reconnect the Telegram account", "result": result})
 		return
 	}
+	if errors.Is(err, domain.ErrConflict) {
+		if result.ChatsProcessed > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "account is inactive or already syncing", "result": result})
+			return
+		}
+		c.JSON(http.StatusConflict, gin.H{"error": "account is inactive or already syncing"})
+		return
+	}
 	if result.ChatsProcessed > 0 {
 		_ = c.Error(err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Telegram sync ended after partial progress", "result": result})
-		return
-	}
-	if errors.Is(err, domain.ErrConflict) {
-		c.JSON(http.StatusConflict, gin.H{"error": "account is inactive or already syncing"})
 		return
 	}
 	handleUsecaseError(c, err, "account not found")

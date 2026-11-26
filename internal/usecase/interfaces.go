@@ -56,8 +56,8 @@ type TelegramSyncClient interface {
 
 // SyncAccountRef identifies an account without exposing its session.
 type SyncAccountRef struct {
-	CompanyID int64 `db:"company_id"`
-	AccountID int64 `db:"id"`
+	CompanyID int64
+	AccountID int64
 }
 
 type SyncDialogResult struct {

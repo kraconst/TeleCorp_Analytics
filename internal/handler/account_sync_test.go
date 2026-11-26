@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -64,5 +65,33 @@ func TestSyncAccountEndpointReturns503WithoutConfiguredService(t *testing.T) {
 	h.InitRoutes().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/accounts/1/sync", nil))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body)
+	}
+}
+
+func TestSyncAccountEndpointPartialConflictReturns409WithResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := New(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	h.SetAccountSync(accountSyncFunc(func(ctx context.Context, companyID, accountID int64) (usecase.SyncResult, error) {
+		return usecase.SyncResult{ChatsProcessed: 1, NewMessages: 2}, domain.ErrConflict
+	}))
+
+	response := httptest.NewRecorder()
+	h.InitRoutes().ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/accounts/9/sync?company_id=3", nil))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d body=%s", response.Code, response.Body)
+	}
+
+	var payload struct {
+		Error  string              `json:"error"`
+		Result *usecase.SyncResult `json:"result"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal response: %v body=%s", err, response.Body)
+	}
+	if payload.Error == "" {
+		t.Fatalf("expected non-empty error field, body=%s", response.Body)
+	}
+	if payload.Result == nil || payload.Result.ChatsProcessed != 1 || payload.Result.NewMessages != 2 {
+		t.Fatalf("unexpected result=%+v body=%s", payload.Result, response.Body)
 	}
 }

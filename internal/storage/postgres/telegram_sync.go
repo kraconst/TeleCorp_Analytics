@@ -24,6 +24,11 @@ func NewTelegramSyncStorage(db *sqlx.DB) *TelegramSyncStorage {
 	return &TelegramSyncStorage{db: db}
 }
 
+type syncAccountRow struct {
+	CompanyID int64 `db:"company_id"`
+	AccountID int64 `db:"id"`
+}
+
 func (s *TelegramSyncStorage) ListSyncAccounts(ctx context.Context) ([]usecase.SyncAccountRef, error) {
 	const query = `
 		SELECT company_id, id
@@ -31,9 +36,16 @@ func (s *TelegramSyncStorage) ListSyncAccounts(ctx context.Context) ([]usecase.S
 		WHERE status = $1 AND octet_length(session) > 0
 		ORDER BY company_id, id
 	`
-	accounts := make([]usecase.SyncAccountRef, 0)
-	if err := s.db.SelectContext(ctx, &accounts, query, domain.StatusActive); err != nil {
+	var rows []syncAccountRow
+	if err := s.db.SelectContext(ctx, &rows, query, domain.StatusActive); err != nil {
 		return nil, mapPgError(fmt.Errorf("list Telegram sync accounts: %w", err))
+	}
+	accounts := make([]usecase.SyncAccountRef, 0, len(rows))
+	for _, row := range rows {
+		accounts = append(accounts, usecase.SyncAccountRef{
+			CompanyID: row.CompanyID,
+			AccountID: row.AccountID,
+		})
 	}
 	return accounts, nil
 }
