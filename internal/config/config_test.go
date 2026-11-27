@@ -192,7 +192,7 @@ func TestConfig_FormatDoesNotLeakAPIKey(t *testing.T) {
 		"cfg %v":     fmt.Sprintf("%v", cfg),
 		"cfg %+v":    fmt.Sprintf("%+v", cfg),
 		"cfg %#v":    fmt.Sprintf("%#v", cfg),
-		"cfg %s":     fmt.Sprintf("%s", cfg),
+		"cfg Sprint": fmt.Sprint(cfg),
 		"ai %v":      fmt.Sprintf("%v", cfg.AI),
 		"ai %+v":     fmt.Sprintf("%+v", cfg.AI),
 		"ai %#v":     fmt.Sprintf("%#v", cfg.AI),
@@ -211,4 +211,35 @@ func TestConfig_FormatDoesNotLeakAPIKey(t *testing.T) {
 	if !strings.Contains(outputs["cfg %+v"], "gpt-test") {
 		t.Errorf("cfg %%+v = %q, want model to be visible", outputs["cfg %+v"])
 	}
+}
+
+func TestMust_AlertCheckInterval(t *testing.T) {
+	t.Run("default when unset", func(t *testing.T) {
+		clearAIEnv(t)
+		t.Setenv("ALERT_CHECK_INTERVAL", "")
+		cfg := Must()
+		if cfg.Alerts.CheckInterval != DefaultAlertCheckInterval {
+			t.Fatalf("expected %s, got %s", DefaultAlertCheckInterval, cfg.Alerts.CheckInterval)
+		}
+	})
+
+	t.Run("custom positive duration", func(t *testing.T) {
+		clearAIEnv(t)
+		t.Setenv("ALERT_CHECK_INTERVAL", "15s")
+		cfg := Must()
+		if cfg.Alerts.CheckInterval != 15*time.Second {
+			t.Fatalf("expected 15s, got %s", cfg.Alerts.CheckInterval)
+		}
+	})
+
+	t.Run("invalid or non-positive falls back to default", func(t *testing.T) {
+		for _, val := range []string{"invalid", "0s", "-5s"} {
+			clearAIEnv(t)
+			t.Setenv("ALERT_CHECK_INTERVAL", val)
+			cfg := Must()
+			if cfg.Alerts.CheckInterval != DefaultAlertCheckInterval {
+				t.Fatalf("for %q expected default %s, got %s", val, DefaultAlertCheckInterval, cfg.Alerts.CheckInterval)
+			}
+		}
+	})
 }

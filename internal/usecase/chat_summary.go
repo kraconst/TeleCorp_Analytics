@@ -24,6 +24,16 @@ const (
 	defaultSummaryMaxMessages = 50
 )
 
+// AIAnalysisHandler обрабатывает результаты AI-анализа (автостатусы и алерты) и адаптирует функцию к ChatAnalysisHandler.
+type AIAnalysisHandler func(ctx context.Context, companyID, chatID int64, result *AIAnalysisResult) error
+
+func (fn AIAnalysisHandler) HandleAnalysis(ctx context.Context, companyID, chatID int64, res AIAnalysisResult) error {
+	if fn == nil {
+		return nil
+	}
+	return fn(ctx, companyID, chatID, &res)
+}
+
 // summaryJob — задача фоновой генерации саммари.
 type summaryJob struct {
 	companyID int64
@@ -104,6 +114,32 @@ func isNilDependency(v any) bool {
 
 func (u *ChatSummaryUsecase) aiEnabled() bool {
 	return u.summarizer != nil && u.messages != nil
+}
+
+// SetAnalysisHandler регистрирует обработчик результата AI-анализа.
+func (u *ChatSummaryUsecase) SetAnalysisHandler(fn AIAnalysisHandler) {
+	if fn == nil {
+		u.analysis = nil
+		return
+	}
+	u.analysis = fn
+}
+
+// ApplyAnalysisResult передаёт результат AI-анализа зарегистрированному обработчику автостатусов и алертов.
+func (u *ChatSummaryUsecase) ApplyAnalysisResult(ctx context.Context, companyID, chatID int64, result *AIAnalysisResult) error {
+	if companyID <= 0 {
+		return fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
+	if chatID <= 0 {
+		return fmt.Errorf("%w: invalid chat_id", domain.ErrValidation)
+	}
+	if result == nil {
+		return fmt.Errorf("%w: analysis result is required", domain.ErrValidation)
+	}
+	if u.analysis == nil {
+		return nil
+	}
+	return u.analysis.HandleAnalysis(ctx, companyID, chatID, *result)
 }
 
 func (u *ChatSummaryUsecase) Upsert(ctx context.Context, companyID int64, summary domain.ChatSummary) error {

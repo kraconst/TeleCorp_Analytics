@@ -11,11 +11,12 @@ import (
 )
 
 type mockChatRepo struct {
-	createFn        func(ctx context.Context, chat domain.Chat) (int64, error)
-	getByIDFn       func(ctx context.Context, id int64) (*domain.Chat, error)
-	listByCompanyFn func(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
-	listByFilterFn  func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
-	updateStatusFn  func(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
+	createFn           func(ctx context.Context, chat domain.Chat) (int64, error)
+	getByIDFn          func(ctx context.Context, id int64) (*domain.Chat, error)
+	listByCompanyFn    func(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
+	listByFilterFn     func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
+	updateStatusFn     func(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
+	updateAutoStatusFn func(ctx context.Context, chatID int64, status domain.ChatStatus) error
 }
 
 func (m *mockChatRepo) Create(ctx context.Context, chat domain.Chat) (int64, error) {
@@ -49,6 +50,13 @@ func (m *mockChatRepo) ListByFilter(ctx context.Context, filter domain.ChatFilte
 func (m *mockChatRepo) UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error {
 	if m.updateStatusFn != nil {
 		return m.updateStatusFn(ctx, id, status, source)
+	}
+	return nil
+}
+
+func (m *mockChatRepo) UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error {
+	if m.updateAutoStatusFn != nil {
+		return m.updateAutoStatusFn(ctx, chatID, status)
 	}
 	return nil
 }

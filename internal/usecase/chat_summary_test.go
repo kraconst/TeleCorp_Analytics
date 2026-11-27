@@ -62,8 +62,16 @@ func (r *genChatRepo) ListByCompany(context.Context, int64, *domain.ChatStatus, 
 	return nil, errors.New("genChatRepo.ListByCompany: not implemented")
 }
 
+func (r *genChatRepo) ListByFilter(context.Context, domain.ChatFilter) ([]domain.Chat, error) {
+	return nil, errors.New("genChatRepo.ListByFilter: not implemented")
+}
+
 func (r *genChatRepo) UpdateStatus(context.Context, int64, domain.ChatStatus, domain.StatusSource) error {
 	return errors.New("genChatRepo.UpdateStatus: not implemented")
+}
+
+func (r *genChatRepo) UpdateAutoStatus(context.Context, int64, domain.ChatStatus) error {
+	return errors.New("genChatRepo.UpdateAutoStatus: not implemented")
 }
 
 func (r *genChatRepo) calls() int {
@@ -74,6 +82,7 @@ func (r *genChatRepo) calls() int {
 
 // genAccountRepo только читается после настройки.
 type genAccountRepo struct {
+	usecase.TelegramAccountStateRepository
 	accounts map[int64]domain.Account
 }
 

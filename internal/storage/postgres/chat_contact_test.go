@@ -825,6 +825,61 @@ func TestChatStorage_UpdateStatus(t *testing.T) {
 	})
 }
 
+func TestChatStorage_UpdateAutoStatus(t *testing.T) {
+	db, mock := setupMockDB(t)
+	defer db.Close()
+	storage := postgres.NewChatStorage(db)
+	ctx := context.Background()
+
+	t.Run("updates status to auto only when status_source != manual", func(t *testing.T) {
+		var capturedQuery string
+		var capturedArgs []driver.Value
+
+		mock.execHandler = func(query string, args []driver.Value) (driver.Result, error) {
+			capturedQuery = query
+			capturedArgs = args
+			return mockResult{rowsAffected: 1}, nil
+		}
+
+		if err := storage.UpdateAutoStatus(ctx, 42, domain.ChatStatusInterested); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cleanQ := strings.ToLower(strings.Join(strings.Fields(capturedQuery), " "))
+		if !strings.Contains(cleanQ, "set status = $1, status_source = 'auto'") {
+			t.Errorf("query missing auto status assignment: %s", capturedQuery)
+		}
+		if !strings.Contains(cleanQ, "where id = $2 and status_source != 'manual'") {
+			t.Errorf("query missing manual guard: %s", capturedQuery)
+		}
+		if len(capturedArgs) != 2 || capturedArgs[0] != string(domain.ChatStatusInterested) ||
+			(capturedArgs[1] != int64(42) && capturedArgs[1] != 42) {
+			t.Errorf("unexpected args: %#v", capturedArgs)
+		}
+	})
+
+	t.Run("skips manual status when rows affected == 0 without error", func(t *testing.T) {
+		mock.execHandler = func(query string, args []driver.Value) (driver.Result, error) {
+			return mockResult{rowsAffected: 0}, nil
+		}
+
+		if err := storage.UpdateAutoStatus(ctx, 42, domain.ChatStatusInterested); err != nil {
+			t.Fatalf("expected nil error when manual status skipped, got %v", err)
+		}
+	})
+
+	t.Run("db exec error is wrapped", func(t *testing.T) {
+		mock.execHandler = func(query string, args []driver.Value) (driver.Result, error) {
+			return nil, errors.New("connection lost")
+		}
+
+		err := storage.UpdateAutoStatus(ctx, 1, domain.ChatStatusLost)
+		if err == nil || !strings.Contains(err.Error(), "update auto chat status") {
+			t.Fatalf("expected wrapped error, got %v", err)
+		}
+	})
+}
+
 // ==========================================
 // 3. Schema & Migrations Empirical Parser Tests
 // ==========================================

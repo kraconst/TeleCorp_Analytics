@@ -22,6 +22,8 @@ const (
 	DefaultAIMaxChars    = 12000
 )
 
+const DefaultAlertCheckInterval = time.Minute
+
 type DBConfig struct {
 	Host     string
 	Port     string
@@ -45,6 +47,10 @@ type AIConfig struct {
 	Timeout     time.Duration
 	MaxMessages int
 	MaxChars    int
+}
+
+type AlertConfig struct {
+	CheckInterval time.Duration
 }
 
 // Enabled сообщает, задан ли API-ключ.
@@ -76,6 +82,7 @@ type Config struct {
 	DB       DBConfig
 	Telegram TelegramConfig
 	AI       AIConfig
+	Alerts   AlertConfig
 }
 
 type TelegramConfig struct {
@@ -134,6 +141,9 @@ func Load() (Config, error) {
 			Timeout:     timeout,
 			MaxMessages: maxMessages,
 			MaxChars:    maxChars,
+		},
+		Alerts: AlertConfig{
+			CheckInterval: getDurationEnv("ALERT_CHECK_INTERVAL", DefaultAlertCheckInterval),
 		},
 	}, nil
 }
@@ -215,4 +225,17 @@ func positiveIntEnv(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("config: %s must be a positive integer", key)
 	}
 	return n, nil
+}
+
+func getDurationEnv(key string, fallback time.Duration) time.Duration {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(val)
+	if err != nil || d <= 0 {
+		log.Printf("Invalid %s=%q, using default %s", key, val, fallback)
+		return fallback
+	}
+	return d
 }

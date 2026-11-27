@@ -2,10 +2,12 @@ package postgres_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,4 +135,105 @@ func TestAlertPostgresLifecycle(t *testing.T) {
 	if err := db.GetContext(ctx, &remainingTables, "SELECT count(*) FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'alerts'", schema); err != nil || remainingTables != 0 {
 		t.Fatalf("down migration did not remove alerts: %d, %v", remainingTables, err)
 	}
+}
+
+func TestAlertStorage_DeduplicationAndNoReplyQueries(t *testing.T) {
+	db, mock := setupMockDB(t)
+	defer db.Close()
+	storage := postgres.NewAlertStorage(db)
+	ctx := context.Background()
+
+	t.Run("Create checks WHERE NOT EXISTS for active alert and returns 0 on duplicate", func(t *testing.T) {
+		var capturedQuery string
+		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
+			capturedQuery = query
+			return &mockRows{cols: []string{"id"}, vals: [][]driver.Value{}}, nil
+		}
+
+		id, err := storage.Create(ctx, domain.Alert{
+			CompanyID: 1,
+			ChatID:    10,
+			Type:      domain.AlertTypeNoReply,
+			CreatedAt: time.Now().UTC(),
+		})
+		if err != nil {
+			t.Fatalf("expected nil error on duplicate skip, got %v", err)
+		}
+		if id != 0 {
+			t.Fatalf("expected id=0 when active duplicate skipped, got %d", id)
+		}
+
+		cleanQ := strings.ToLower(strings.Join(strings.Fields(capturedQuery), " "))
+		if !strings.Contains(cleanQ, "where chat_id = $2 and type = $3 and resolved_at is null") {
+			t.Errorf("Create query missing active deduplication check: %s", capturedQuery)
+		}
+	})
+
+	t.Run("Create returns 0 on unique constraint conflict 23505", func(t *testing.T) {
+		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
+			return nil, errors.New("ERROR: duplicate key value violates unique constraint (SQLSTATE 23505)")
+		}
+
+		id, err := storage.Create(ctx, domain.Alert{
+			CompanyID: 1,
+			ChatID:    10,
+			Type:      domain.AlertTypeComplaint,
+			CreatedAt: time.Now().UTC(),
+		})
+		if err != nil || id != 0 {
+			t.Fatalf("expected (0, nil) on concurrent 23505 conflict, got (%d, %v)", id, err)
+		}
+	})
+
+	t.Run("ExistsActive queries unresolved alert by chat_id and type", func(t *testing.T) {
+		var capturedQuery string
+		var capturedArgs []driver.Value
+		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
+			capturedQuery = query
+			capturedArgs = args
+			return &mockRows{cols: []string{"exists"}, vals: [][]driver.Value{{true}}}, nil
+		}
+
+		exists, err := storage.ExistsActive(ctx, 15, domain.AlertTypeUrgent)
+		if err != nil || !exists {
+			t.Fatalf("expected exists=true, err=nil; got %v, %v", exists, err)
+		}
+		cleanQ := strings.ToLower(strings.Join(strings.Fields(capturedQuery), " "))
+		if !strings.Contains(cleanQ, "where chat_id = $1 and type = $2 and resolved_at is null") {
+			t.Errorf("ExistsActive query mismatch: %s", capturedQuery)
+		}
+		if len(capturedArgs) != 2 || capturedArgs[0] != int64(15) || capturedArgs[1] != string(domain.AlertTypeUrgent) {
+			t.Errorf("unexpected ExistsActive args: %#v", capturedArgs)
+		}
+	})
+
+	t.Run("FindExpiredNoReplyChats joins companies and excludes active no_reply alerts", func(t *testing.T) {
+		var capturedQuery string
+		var capturedArgs []driver.Value
+		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
+			capturedQuery = query
+			capturedArgs = args
+			return &mockRows{
+				cols: []string{"company_id", "chat_id"},
+				vals: [][]driver.Value{{int64(2), int64(44)}},
+			}, nil
+		}
+
+		chats, err := storage.FindExpiredNoReplyChats(ctx)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(chats) != 1 || chats[0].CompanyID != 2 || chats[0].ChatID != 44 {
+			t.Fatalf("unexpected result: %+v", chats)
+		}
+		cleanQ := strings.ToLower(strings.Join(strings.Fields(capturedQuery), " "))
+		if !strings.Contains(cleanQ, "c.awaiting_reply_since is not null") ||
+			!strings.Contains(cleanQ, "(comp.no_reply_threshold / 1000000000.0) * interval '1 second'") ||
+			!strings.Contains(cleanQ, "al.chat_id = c.id and al.type = $1 and al.resolved_at is null") {
+			t.Errorf("FindExpiredNoReplyChats query mismatch: %s", capturedQuery)
+		}
+		if len(capturedArgs) != 1 || capturedArgs[0] != string(domain.AlertTypeNoReply) {
+			t.Errorf("unexpected args: %#v", capturedArgs)
+		}
+	})
 }

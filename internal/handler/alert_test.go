@@ -81,6 +81,14 @@ func (s alertHandlerRepoStub) Create(context.Context, domain.Alert) (int64, erro
 	return 0, errors.New("not used by HTTP API")
 }
 
+func (s alertHandlerRepoStub) ExistsActive(context.Context, int64, domain.AlertType) (bool, error) {
+	return false, nil
+}
+
+func (s alertHandlerRepoStub) FindExpiredNoReplyChats(context.Context) ([]domain.NoReplyChat, error) {
+	return nil, nil
+}
+
 func (s alertHandlerRepoStub) ListActiveByCompany(ctx context.Context, companyID int64) ([]domain.Alert, error) {
 	return s.list(ctx, companyID)
 }

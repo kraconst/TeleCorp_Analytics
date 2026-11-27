@@ -31,6 +31,38 @@ const (
 	requestReserve = 5 * time.Second
 )
 
+type noReplyAlertChecker interface {
+	CheckNoReplyAlerts(ctx context.Context) (int, error)
+}
+
+func runNoReplyAlertWorker(ctx context.Context, checker noReplyAlertChecker, interval time.Duration) {
+	if checker == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = config.DefaultAlertCheckInterval
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			created, err := checker.CheckNoReplyAlerts(checkCtx)
+			cancel()
+			if err != nil && !errors.Is(err, context.Canceled) {
+				log.Printf("No-reply alert check error: %v", err)
+			} else if created > 0 {
+				log.Printf("Created %d no-reply alert(s)", created)
+			}
+		}
+	}
+}
+
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -94,10 +126,9 @@ func run(ctx context.Context, args []string) error {
 	accountDailyStatsUsecase := usecase.NewAccountDailyStatsUsecase(accountDailyStatsRepo, accountRepo)
 	alertUsecase := usecase.NewAlertUsecase(alertRepo, chatRepo, accountRepo)
 	companyUsecase := usecase.NewCompanyUsecase(companyRepo)
-	// ChatAnalysisHandler = nil до трека 2B (автостатусы/алерты).
-	// Когда Группа 1 добавит SyncUsecase, передать summaryUsecase.Enqueue как OnChatUpdated (RFC 02, D4).
 	summaryUsecase := usecase.NewChatSummaryUsecaseWithAI(
-		summaryRepo, chatRepo, accountRepo, messageRepo, summarizer, nil, cfg.AI.MaxMessages,
+		summaryRepo, chatRepo, accountRepo, messageRepo, summarizer,
+		usecase.AIAnalysisHandler(alertUsecase.ApplyAIAnalysis), cfg.AI.MaxMessages,
 	)
 	userUsecase := usecase.NewUserUsecase(userRepo, employeeRepo)
 
@@ -121,9 +152,7 @@ func run(ctx context.Context, args []string) error {
 		log.Printf("Telegram sync disabled: %v", err)
 	} else {
 		syncer := usecase.NewSyncUsecase(postgres.NewTelegramSyncStorage(db), client, usecase.SyncOptions{
-			OnChatUpdated: func(_ context.Context, companyID, chatID int64) {
-				summaryUsecase.Enqueue(companyID, chatID)
-			},
+			OnChatUpdated: summaryUsecase.Enqueue,
 		})
 		h.SetAccountSync(syncer)
 		workers.Go(func() { syncer.RunNotifications(appCtx) })
@@ -151,6 +180,11 @@ func run(ctx context.Context, args []string) error {
 
 	// Воркер AI-саммаризации запускается всегда: без AI Enqueue — no-op, Run просто ждёт отмены.
 	workers.Go(func() { summaryUsecase.Run(appCtx) })
+	workers.Go(func() {
+		log.Printf("No-reply alert worker started (interval=%s)", cfg.Alerts.CheckInterval)
+		runNoReplyAlertWorker(appCtx, alertUsecase, cfg.Alerts.CheckInterval)
+		log.Println("No-reply alert worker stopped")
+	})
 
 	serveDone := make(chan error, 1)
 	go func() {

@@ -118,6 +118,7 @@ type ChatRepository interface {
 	ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
 	ListByFilter(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
 	UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
+	UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error
 }
 
 // AccountDailyStatsRepository определяет контракт доступа к дневной аналитике аккаунтов.
@@ -133,6 +134,8 @@ type AccountDailyStatsRepository interface {
 // AlertRepository хранит уведомления и ограничивает операции компанией.
 type AlertRepository interface {
 	Create(ctx context.Context, alert domain.Alert) (int64, error)
+	ExistsActive(ctx context.Context, chatID int64, alertType domain.AlertType) (bool, error)
+	FindExpiredNoReplyChats(ctx context.Context) ([]domain.NoReplyChat, error)
 	ListActiveByCompany(ctx context.Context, companyID int64) ([]domain.Alert, error)
 	Resolve(ctx context.Context, companyID, id int64) error
 }
@@ -151,10 +154,13 @@ type AnalyzeChatInput struct {
 
 // AIAnalysisResult — провалидированный результат AI-анализа диалога.
 type AIAnalysisResult struct {
-	Topic, Agreements, NextStep, OpenQuestions string
-	Risk                                       domain.RiskLevel
-	SuggestedStatus                            *domain.ChatStatus // nil — не менять статус
-	AlertTypes                                 []domain.AlertType // после фильтрации в internal/ai: только complaint|refusal|negative|urgent, без дублей
+	Topic           string             `json:"topic"`
+	Agreements      string             `json:"agreements"`
+	NextStep        string             `json:"next_step"`
+	OpenQuestions   string             `json:"open_questions"`
+	Risk            domain.RiskLevel   `json:"risk"`
+	SuggestedStatus *domain.ChatStatus `json:"suggested_status,omitempty"` // nil — не менять статус
+	AlertTypes      []domain.AlertType `json:"alert_types,omitempty"`      // после фильтрации в internal/ai: только complaint|refusal|negative|urgent, без дублей
 }
 
 // ChatSummarizer строит AI-выжимку диалога. Реализуется internal/ai.

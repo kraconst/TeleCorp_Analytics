@@ -251,10 +251,11 @@ func TestMockHandler_UpdateChatStatus(t *testing.T) {
 
 // Tests for database/usecase-backed mode:
 type handlerMockChatRepo struct {
-	getByIDFn       func(ctx context.Context, id int64) (*domain.Chat, error)
-	listByCompanyFn func(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
-	listByFilterFn  func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
-	updateStatusFn  func(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
+	getByIDFn          func(ctx context.Context, id int64) (*domain.Chat, error)
+	listByCompanyFn    func(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
+	listByFilterFn     func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
+	updateStatusFn     func(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
+	updateAutoStatusFn func(ctx context.Context, chatID int64, status domain.ChatStatus) error
 }
 
 func (m *handlerMockChatRepo) Create(ctx context.Context, chat domain.Chat) (int64, error) {
@@ -284,6 +285,12 @@ func (m *handlerMockChatRepo) ListByFilter(ctx context.Context, filter domain.Ch
 func (m *handlerMockChatRepo) UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error {
 	if m.updateStatusFn != nil {
 		return m.updateStatusFn(ctx, id, status, source)
+	}
+	return nil
+}
+func (m *handlerMockChatRepo) UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error {
+	if m.updateAutoStatusFn != nil {
+		return m.updateAutoStatusFn(ctx, chatID, status)
 	}
 	return nil
 }
