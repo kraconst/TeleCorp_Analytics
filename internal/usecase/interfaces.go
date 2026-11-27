@@ -116,6 +116,7 @@ type ChatRepository interface {
 	Create(ctx context.Context, chat domain.Chat) (int64, error)
 	GetByID(ctx context.Context, id int64) (*domain.Chat, error)
 	ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
+	ListByFilter(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
 	UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
 }
 

@@ -57,6 +57,9 @@ func (m *mockChatRepoStub) GetByID(ctx context.Context, id int64) (*domain.Chat,
 func (m *mockChatRepoStub) ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error) {
 	return nil, nil
 }
+func (m *mockChatRepoStub) ListByFilter(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error) {
+	return nil, nil
+}
 func (m *mockChatRepoStub) UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error {
 	return nil
 }

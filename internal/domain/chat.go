@@ -42,9 +42,21 @@ type Chat struct {
 	UnreadCount        int          `json:"unread_count" db:"unread_count"`
 }
 
-// ChatFilter задаёт параметры фильтрации списка чатов компании.
+const (
+	ChatSortLastMessage   = "last_message"
+	ChatSortAwaitingReply = "awaiting_reply"
+)
+
+// ChatFilter задаёт параметры фильтрации, поиска, сортировки и пагинации списка чатов компании.
 type ChatFilter struct {
-	CompanyID  int64       `json:"company_id"`
-	EmployeeID *int64      `json:"employee_id,omitempty"`
-	Status     *ChatStatus `json:"status,omitempty"`
+	CompanyID      int64         `json:"company_id"`
+	EmployeeID     *int64        `json:"employee_id,omitempty"`
+	AccountID      *int64        `json:"account_id,omitempty"`
+	Status         *ChatStatus   `json:"status,omitempty"`
+	Priority       *ChatPriority `json:"priority,omitempty"`
+	UnansweredOnly bool          `json:"unanswered_only,omitempty"`
+	Query          string        `json:"query,omitempty"`
+	SortBy         string        `json:"sort_by,omitempty"`
+	Limit          int           `json:"limit,omitempty"`
+	Offset         int           `json:"offset,omitempty"`
 }

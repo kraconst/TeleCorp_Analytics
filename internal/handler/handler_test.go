@@ -253,6 +253,7 @@ func TestMockHandler_UpdateChatStatus(t *testing.T) {
 type handlerMockChatRepo struct {
 	getByIDFn       func(ctx context.Context, id int64) (*domain.Chat, error)
 	listByCompanyFn func(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
+	listByFilterFn  func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
 	updateStatusFn  func(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
 }
 
@@ -268,6 +269,15 @@ func (m *handlerMockChatRepo) GetByID(ctx context.Context, id int64) (*domain.Ch
 func (m *handlerMockChatRepo) ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error) {
 	if m.listByCompanyFn != nil {
 		return m.listByCompanyFn(ctx, companyID, status, employeeID)
+	}
+	return []domain.Chat{}, nil
+}
+func (m *handlerMockChatRepo) ListByFilter(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error) {
+	if m.listByFilterFn != nil {
+		return m.listByFilterFn(ctx, filter)
+	}
+	if m.listByCompanyFn != nil {
+		return m.listByCompanyFn(ctx, filter.CompanyID, filter.Status, filter.EmployeeID)
 	}
 	return []domain.Chat{}, nil
 }

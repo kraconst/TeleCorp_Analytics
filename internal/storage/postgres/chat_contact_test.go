@@ -585,6 +585,191 @@ func TestChatStorage_ListByCompany(t *testing.T) {
 	})
 }
 
+func TestChatStorage_ListByFilter(t *testing.T) {
+	db, mock := setupMockDB(t)
+	defer db.Close()
+	storage := postgres.NewChatStorage(db)
+	ctx := context.Background()
+
+	chatCols := []string{
+		"id", "account_id", "contact_id", "status", "status_source", "priority",
+		"last_message_at", "awaiting_reply_since", "unread_count",
+	}
+
+	t.Run("base filter with companyID and limit uses default sort and returns non-nil empty slice", func(t *testing.T) {
+		var capturedQuery string
+		var capturedArgs []driver.Value
+
+		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
+			capturedQuery = query
+			capturedArgs = args
+			return &mockRows{
+				cols: chatCols,
+				vals: [][]driver.Value{},
+			}, nil
+		}
+
+		list, err := storage.ListByFilter(ctx, domain.ChatFilter{
+			CompanyID: 7,
+			Limit:     50,
+			Query:     "   ",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if list == nil {
+			t.Fatal("expected non-nil empty slice, got nil")
+		}
+		if len(list) != 0 {
+			t.Fatalf("expected 0 chats, got %d", len(list))
+		}
+
+		cleanQ := strings.ToLower(strings.Join(strings.Fields(capturedQuery), " "))
+		requiredClauses := []string{
+			"select c.id, c.account_id, c.contact_id, c.status, c.status_source, c.priority, c.last_message_at, c.awaiting_reply_since, c.unread_count",
+			"from chats c",
+			"join accounts a on c.account_id = a.id",
+			"join contacts ct on c.contact_id = ct.id and ct.company_id = a.company_id",
+			"where a.company_id = $1",
+			"order by c.last_message_at desc, c.id desc",
+			"limit $2",
+		}
+		for _, clause := range requiredClauses {
+			if !strings.Contains(cleanQ, clause) {
+				t.Errorf("query missing clause %q: %s", clause, capturedQuery)
+			}
+		}
+		forbiddenClauses := []string{
+			"and c.status =",
+			"and a.employee_id =",
+			"and c.account_id =",
+			"and c.priority =",
+			"awaiting_reply_since is not null",
+			"ilike",
+			"offset",
+		}
+		for _, clause := range forbiddenClauses {
+			if strings.Contains(cleanQ, clause) {
+				t.Errorf("query unexpectedly contains %q: %s", clause, capturedQuery)
+			}
+		}
+
+		if len(capturedArgs) != 2 {
+			t.Fatalf("expected 2 args, got %d: %#v", len(capturedArgs), capturedArgs)
+		}
+		if capturedArgs[0] != int64(7) {
+			t.Errorf("expected arg $1=7, got %v (%T)", capturedArgs[0], capturedArgs[0])
+		}
+		if capturedArgs[1] != int64(50) {
+			t.Errorf("expected arg $2=50, got %v (%T)", capturedArgs[1], capturedArgs[1])
+		}
+	})
+
+	t.Run("full combination of filters escapes ILIKE special chars and applies awaiting_reply sort", func(t *testing.T) {
+		var capturedQuery string
+		var capturedArgs []driver.Value
+		fixedTime := time.Date(2026, 11, 20, 15, 30, 0, 0, time.UTC)
+
+		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
+			capturedQuery = query
+			capturedArgs = args
+			return &mockRows{
+				cols: chatCols,
+				vals: [][]driver.Value{
+					{int64(99), int64(12), int64(34), "waiting_reply", "auto", "high", fixedTime, fixedTime, 2},
+				},
+			}, nil
+		}
+
+		status := domain.ChatStatusWaitingReply
+		empID := int64(5)
+		accID := int64(12)
+		priority := domain.ChatPriorityHigh
+		list, err := storage.ListByFilter(ctx, domain.ChatFilter{
+			CompanyID:      3,
+			Status:         &status,
+			EmployeeID:     &empID,
+			AccountID:      &accID,
+			Priority:       &priority,
+			UnansweredOnly: true,
+			Query:          `  50%_\deal  `,
+			SortBy:         domain.ChatSortAwaitingReply,
+			Limit:          20,
+			Offset:         40,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(list) != 1 || list[0].ID != 99 || list[0].Priority != domain.ChatPriorityHigh {
+			t.Fatalf("unexpected chats result: %#v", list)
+		}
+
+		cleanQ := strings.ToLower(strings.Join(strings.Fields(capturedQuery), " "))
+		expectedClauses := []string{
+			"join accounts a on c.account_id = a.id",
+			"join contacts ct on c.contact_id = ct.id and ct.company_id = a.company_id",
+			"where a.company_id = $1",
+			"and c.status = $2",
+			"and a.employee_id = $3",
+			"and c.account_id = $4",
+			"and c.priority = $5",
+			"and c.awaiting_reply_since is not null",
+			`and (ct.name ilike $6 escape '\' or ct.username ilike $6 escape '\' or exists (select 1 from messages m where m.chat_id = c.id and m.text ilike $6 escape '\'))`,
+			"order by c.awaiting_reply_since asc nulls last, c.id desc",
+			"limit $7",
+			"offset $8",
+		}
+		for _, clause := range expectedClauses {
+			if !strings.Contains(cleanQ, clause) {
+				t.Errorf("query missing clause %q:\n%s", clause, capturedQuery)
+			}
+		}
+
+		if len(capturedArgs) != 8 {
+			t.Fatalf("expected 8 args, got %d: %#v", len(capturedArgs), capturedArgs)
+		}
+		if capturedArgs[0] != int64(3) {
+			t.Errorf("arg $1 (company_id): got %v, want 3", capturedArgs[0])
+		}
+		if capturedArgs[1] != "waiting_reply" {
+			t.Errorf("arg $2 (status): got %v, want waiting_reply", capturedArgs[1])
+		}
+		if capturedArgs[2] != int64(5) {
+			t.Errorf("arg $3 (employee_id): got %v, want 5", capturedArgs[2])
+		}
+		if capturedArgs[3] != int64(12) {
+			t.Errorf("arg $4 (account_id): got %v, want 12", capturedArgs[3])
+		}
+		if capturedArgs[4] != "high" {
+			t.Errorf("arg $5 (priority): got %v, want high", capturedArgs[4])
+		}
+		wantPattern := `%50\%\_\\deal%`
+		if capturedArgs[5] != wantPattern {
+			t.Errorf("arg $6 (query pattern): got %q, want %q", capturedArgs[5], wantPattern)
+		}
+		if capturedArgs[6] != int64(20) {
+			t.Errorf("arg $7 (limit): got %v, want 20", capturedArgs[6])
+		}
+		if capturedArgs[7] != int64(40) {
+			t.Errorf("arg $8 (offset): got %v, want 40", capturedArgs[7])
+		}
+	})
+
+	t.Run("propagates database errors with context", func(t *testing.T) {
+		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
+			return nil, errors.New("connection reset")
+		}
+
+		_, err := storage.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1})
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !strings.Contains(err.Error(), "list chats by filter") {
+			t.Errorf("expected error to contain 'list chats by filter', got %v", err)
+		}
+	})
+}
+
 func TestChatStorage_UpdateStatus(t *testing.T) {
 	db, mock := setupMockDB(t)
 	defer db.Close()

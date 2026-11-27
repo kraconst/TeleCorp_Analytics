@@ -14,6 +14,7 @@ type mockChatRepo struct {
 	createFn        func(ctx context.Context, chat domain.Chat) (int64, error)
 	getByIDFn       func(ctx context.Context, id int64) (*domain.Chat, error)
 	listByCompanyFn func(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
+	listByFilterFn  func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
 	updateStatusFn  func(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
 }
 
@@ -34,6 +35,13 @@ func (m *mockChatRepo) GetByID(ctx context.Context, id int64) (*domain.Chat, err
 func (m *mockChatRepo) ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error) {
 	if m.listByCompanyFn != nil {
 		return m.listByCompanyFn(ctx, companyID, status, employeeID)
+	}
+	return []domain.Chat{}, nil
+}
+
+func (m *mockChatRepo) ListByFilter(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error) {
+	if m.listByFilterFn != nil {
+		return m.listByFilterFn(ctx, filter)
 	}
 	return []domain.Chat{}, nil
 }
@@ -182,6 +190,181 @@ func TestChatUsecase_ListByCompany(t *testing.T) {
 		chats, err := uc.ListByCompany(ctx, 1, &st, &empID)
 		if err != nil || len(chats) != 1 {
 			t.Fatalf("unexpected result: %v, len=%d", err, len(chats))
+		}
+	})
+}
+
+func TestChatUsecase_ListByFilter(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("invalid company_id", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		for _, cid := range []int64{0, -1} {
+			_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: cid})
+			if !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("company_id=%d: expected ErrValidation, got %v", cid, err)
+			}
+		}
+	})
+
+	t.Run("invalid status", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		st := domain.ChatStatus("bogus")
+		_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1, Status: &st})
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation, got %v", err)
+		}
+	})
+
+	t.Run("invalid employee_id", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		for _, eid := range []int64{0, -5} {
+			id := eid
+			_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1, EmployeeID: &id})
+			if !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("employee_id=%d: expected ErrValidation, got %v", eid, err)
+			}
+		}
+	})
+
+	t.Run("invalid account_id", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		for _, aid := range []int64{0, -3} {
+			id := aid
+			_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1, AccountID: &id})
+			if !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("account_id=%d: expected ErrValidation, got %v", aid, err)
+			}
+		}
+	})
+
+	t.Run("invalid priority", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		pr := domain.ChatPriority("urgent")
+		_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1, Priority: &pr})
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation, got %v", err)
+		}
+	})
+
+	t.Run("invalid sort", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1, SortBy: "oldest"})
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation, got %v", err)
+		}
+	})
+
+	t.Run("invalid limit", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		for _, lim := range []int{-1, 101} {
+			_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1, Limit: lim})
+			if !errors.Is(err, domain.ErrValidation) {
+				t.Fatalf("limit=%d: expected ErrValidation, got %v", lim, err)
+			}
+		}
+	})
+
+	t.Run("invalid offset", func(t *testing.T) {
+		uc := usecase.NewChatUsecase(&mockChatRepo{}, nil, nil, nil)
+		_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1, Offset: -1})
+		if !errors.Is(err, domain.ErrValidation) {
+			t.Fatalf("expected ErrValidation, got %v", err)
+		}
+	})
+
+	t.Run("default normalization and non-nil empty slice", func(t *testing.T) {
+		var gotFilter domain.ChatFilter
+		repo := &mockChatRepo{
+			listByFilterFn: func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error) {
+				gotFilter = filter
+				return nil, nil
+			},
+		}
+		uc := usecase.NewChatUsecase(repo, nil, nil, nil)
+		chats, err := uc.ListByFilter(ctx, domain.ChatFilter{
+			CompanyID: 2,
+			Query:     "  abc  ",
+			Limit:     0,
+			SortBy:    "",
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if chats == nil {
+			t.Fatalf("expected non-nil empty slice, got nil")
+		}
+		if len(chats) != 0 {
+			t.Fatalf("expected empty slice, got len=%d", len(chats))
+		}
+		if gotFilter.Limit != 50 {
+			t.Errorf("expected default limit 50, got %d", gotFilter.Limit)
+		}
+		if gotFilter.SortBy != domain.ChatSortLastMessage {
+			t.Errorf("expected default sort %q, got %q", domain.ChatSortLastMessage, gotFilter.SortBy)
+		}
+		if gotFilter.Query != "abc" {
+			t.Errorf("expected trimmed query %q, got %q", "abc", gotFilter.Query)
+		}
+	})
+
+	t.Run("success passes all filters to repository", func(t *testing.T) {
+		empID := int64(7)
+		accID := int64(11)
+		st := domain.ChatStatusWaitingReply
+		pr := domain.ChatPriorityHigh
+
+		var gotFilter domain.ChatFilter
+		repo := &mockChatRepo{
+			listByFilterFn: func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error) {
+				gotFilter = filter
+				return []domain.Chat{{ID: 55, AccountID: accID, Status: st, Priority: pr}}, nil
+			},
+		}
+		uc := usecase.NewChatUsecase(repo, nil, nil, nil)
+		chats, err := uc.ListByFilter(ctx, domain.ChatFilter{
+			CompanyID:      3,
+			EmployeeID:     &empID,
+			AccountID:      &accID,
+			Status:         &st,
+			Priority:       &pr,
+			UnansweredOnly: true,
+			Query:          " invoice ",
+			SortBy:         domain.ChatSortAwaitingReply,
+			Limit:          25,
+			Offset:         10,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(chats) != 1 || chats[0].ID != 55 {
+			t.Fatalf("unexpected chats: %+v", chats)
+		}
+		if gotFilter.CompanyID != 3 ||
+			gotFilter.EmployeeID == nil || *gotFilter.EmployeeID != empID ||
+			gotFilter.AccountID == nil || *gotFilter.AccountID != accID ||
+			gotFilter.Status == nil || *gotFilter.Status != st ||
+			gotFilter.Priority == nil || *gotFilter.Priority != pr ||
+			!gotFilter.UnansweredOnly ||
+			gotFilter.Query != "invoice" ||
+			gotFilter.SortBy != domain.ChatSortAwaitingReply ||
+			gotFilter.Limit != 25 ||
+			gotFilter.Offset != 10 {
+			t.Fatalf("filter mismatch: %+v", gotFilter)
+		}
+	})
+
+	t.Run("propagates repository error", func(t *testing.T) {
+		repoErr := errors.New("db connection lost")
+		repo := &mockChatRepo{
+			listByFilterFn: func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error) {
+				return nil, repoErr
+			},
+		}
+		uc := usecase.NewChatUsecase(repo, nil, nil, nil)
+		_, err := uc.ListByFilter(ctx, domain.ChatFilter{CompanyID: 1})
+		if !errors.Is(err, repoErr) {
+			t.Fatalf("expected repoErr, got %v", err)
 		}
 	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kraconst/GO_server/internal/domain"
@@ -90,6 +91,51 @@ func (u *ChatUsecase) ListByCompany(ctx context.Context, companyID int64, status
 	}
 
 	return u.chats.ListByCompany(ctx, companyID, status, employeeID)
+}
+
+func (u *ChatUsecase) ListByFilter(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error) {
+	if filter.CompanyID <= 0 {
+		return nil, fmt.Errorf("%w: invalid company_id", domain.ErrValidation)
+	}
+	if filter.Status != nil && !isValidChatStatus(*filter.Status) {
+		return nil, fmt.Errorf("%w: invalid chat status '%s'", domain.ErrValidation, *filter.Status)
+	}
+	if filter.EmployeeID != nil && *filter.EmployeeID <= 0 {
+		return nil, fmt.Errorf("%w: invalid employee_id", domain.ErrValidation)
+	}
+	if filter.AccountID != nil && *filter.AccountID <= 0 {
+		return nil, fmt.Errorf("%w: invalid account_id", domain.ErrValidation)
+	}
+	if filter.Priority != nil && !isValidChatPriority(*filter.Priority) {
+		return nil, fmt.Errorf("%w: invalid priority '%s'", domain.ErrValidation, *filter.Priority)
+	}
+
+	filter.Query = strings.TrimSpace(filter.Query)
+
+	if filter.SortBy == "" {
+		filter.SortBy = domain.ChatSortLastMessage
+	} else if filter.SortBy != domain.ChatSortLastMessage && filter.SortBy != domain.ChatSortAwaitingReply {
+		return nil, fmt.Errorf("%w: invalid sort '%s'", domain.ErrValidation, filter.SortBy)
+	}
+
+	if filter.Limit == 0 {
+		filter.Limit = 50
+	} else if filter.Limit < 0 || filter.Limit > 100 {
+		return nil, fmt.Errorf("%w: invalid limit %d", domain.ErrValidation, filter.Limit)
+	}
+
+	if filter.Offset < 0 {
+		return nil, fmt.Errorf("%w: invalid offset %d", domain.ErrValidation, filter.Offset)
+	}
+
+	chats, err := u.chats.ListByFilter(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	if chats == nil {
+		return make([]domain.Chat, 0), nil
+	}
+	return chats, nil
 }
 
 func (u *ChatUsecase) GetByID(ctx context.Context, companyID, id int64) (*domain.Chat, error) {

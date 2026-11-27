@@ -668,14 +668,20 @@ func (h *Handler) DeactivateEmployee(c *gin.Context) {
 
 // --- Chats ---
 
-func (h *Handler) ListChats(c *gin.Context) {
+func parseChatFilter(c *gin.Context) (domain.ChatFilter, error) {
 	companyID, err := parseCompanyID(c)
 	if err != nil {
-		handleUsecaseError(c, err, "")
-		return
+		return domain.ChatFilter{}, err
 	}
 
-	var status *domain.ChatStatus
+	filter := domain.ChatFilter{
+		CompanyID: companyID,
+		Query:     strings.TrimSpace(c.Query("q")),
+		SortBy:    domain.ChatSortLastMessage,
+		Limit:     50,
+		Offset:    0,
+	}
+
 	if s := c.Query("status"); s != "" {
 		st := domain.ChatStatus(s)
 		switch st {
@@ -686,66 +692,190 @@ func (h *Handler) ListChats(c *gin.Context) {
 			domain.ChatStatusUnhappy,
 			domain.ChatStatusLost,
 			domain.ChatStatusActionRequired:
-			status = &st
+			filter.Status = &st
 		default:
-			c.JSON(400, gin.H{"error": "invalid status"})
-			return
+			return domain.ChatFilter{}, fmt.Errorf("%w: invalid status", domain.ErrValidation)
 		}
 	}
 
-	var employeeID *int64
 	if empStr := c.Query("employee_id"); empStr != "" {
 		empID, err := strconv.ParseInt(empStr, 10, 64)
 		if err != nil || empID <= 0 {
-			c.JSON(400, gin.H{"error": "employee_id must be a positive number"})
-			return
+			return domain.ChatFilter{}, fmt.Errorf("%w: employee_id must be a positive number", domain.ErrValidation)
 		}
-		employeeID = &empID
+		filter.EmployeeID = &empID
 	}
 
-	if h.chatUsecase == nil {
-		mockMu.RLock()
-		res := make([]domain.Chat, 0)
-		for _, chat := range mockChats {
-			if status != nil && chat.Status != *status {
-				continue
+	if accStr := c.Query("account_id"); accStr != "" {
+		accID, err := strconv.ParseInt(accStr, 10, 64)
+		if err != nil || accID <= 0 {
+			return domain.ChatFilter{}, fmt.Errorf("%w: account_id must be a positive number", domain.ErrValidation)
+		}
+		filter.AccountID = &accID
+	}
+
+	if p := c.Query("priority"); p != "" {
+		pr := domain.ChatPriority(p)
+		switch pr {
+		case domain.ChatPriorityLow, domain.ChatPriorityNormal, domain.ChatPriorityHigh:
+			filter.Priority = &pr
+		default:
+			return domain.ChatFilter{}, fmt.Errorf("%w: invalid priority", domain.ErrValidation)
+		}
+	}
+
+	if u := c.Query("unanswered"); u != "" {
+		switch u {
+		case "true":
+			filter.UnansweredOnly = true
+		case "false":
+			filter.UnansweredOnly = false
+		default:
+			return domain.ChatFilter{}, fmt.Errorf("%w: unanswered must be true or false", domain.ErrValidation)
+		}
+	}
+
+	if sortBy := c.Query("sort"); sortBy != "" {
+		switch sortBy {
+		case domain.ChatSortLastMessage, domain.ChatSortAwaitingReply:
+			filter.SortBy = sortBy
+		default:
+			return domain.ChatFilter{}, fmt.Errorf("%w: invalid sort", domain.ErrValidation)
+		}
+	}
+
+	if limitStr := c.Query("limit"); limitStr != "" {
+		limit, err := strconv.Atoi(limitStr)
+		if err != nil || limit < 1 || limit > 100 {
+			return domain.ChatFilter{}, fmt.Errorf("%w: limit must be between 1 and 100", domain.ErrValidation)
+		}
+		filter.Limit = limit
+	}
+
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		offset, err := strconv.Atoi(offsetStr)
+		if err != nil || offset < 0 {
+			return domain.ChatFilter{}, fmt.Errorf("%w: offset must be a non-negative integer", domain.ErrValidation)
+		}
+		filter.Offset = offset
+	}
+
+	return filter, nil
+}
+
+func filterMockChats(filter domain.ChatFilter) []domain.Chat {
+	lowerQuery := strings.ToLower(filter.Query)
+
+	mockMu.RLock()
+	res := make([]domain.Chat, 0)
+	for _, chat := range mockChats {
+		var chatAccount *domain.Account
+		for i := range mockAccounts {
+			if mockAccounts[i].ID == chat.AccountID && mockAccounts[i].CompanyID == filter.CompanyID {
+				chatAccount = &mockAccounts[i]
+				break
 			}
-			if employeeID != nil {
-				matched := false
-				for _, acc := range mockAccounts {
-					if acc.ID == chat.AccountID && acc.EmployeeID == *employeeID {
+		}
+		if chatAccount == nil {
+			continue
+		}
+		if filter.Status != nil && chat.Status != *filter.Status {
+			continue
+		}
+		if filter.EmployeeID != nil && chatAccount.EmployeeID != *filter.EmployeeID {
+			continue
+		}
+		if filter.AccountID != nil && chat.AccountID != *filter.AccountID {
+			continue
+		}
+		if filter.Priority != nil && chat.Priority != *filter.Priority {
+			continue
+		}
+		if filter.UnansweredOnly && chat.AwaitingReplySince == nil {
+			continue
+		}
+		if lowerQuery != "" {
+			matched := false
+			for _, contact := range mockContacts {
+				if contact.ID == chat.ContactID && contact.CompanyID == filter.CompanyID {
+					if strings.Contains(strings.ToLower(contact.Name), lowerQuery) ||
+						strings.Contains(strings.ToLower(contact.Username), lowerQuery) {
+						matched = true
+					}
+					break
+				}
+			}
+			if !matched {
+				for _, msg := range mockMessages {
+					if msg.ChatID == chat.ID && strings.Contains(strings.ToLower(msg.Text), lowerQuery) {
 						matched = true
 						break
 					}
 				}
-				if !matched {
-					continue
-				}
 			}
-			res = append(res, chat)
+			if !matched {
+				continue
+			}
 		}
-		mockMu.RUnlock()
+		res = append(res, chat)
+	}
+	mockMu.RUnlock()
 
-		sort.Slice(res, func(i, j int) bool {
-			if res[i].LastMessageAt.Equal(res[j].LastMessageAt) {
+	sort.Slice(res, func(i, j int) bool {
+		if filter.SortBy == domain.ChatSortAwaitingReply {
+			ai := res[i].AwaitingReplySince
+			aj := res[j].AwaitingReplySince
+			if ai == nil && aj == nil {
 				return res[i].ID > res[j].ID
 			}
-			return res[i].LastMessageAt.After(res[j].LastMessageAt)
-		})
+			if ai == nil {
+				return false
+			}
+			if aj == nil {
+				return true
+			}
+			if ai.Equal(*aj) {
+				return res[i].ID > res[j].ID
+			}
+			return ai.Before(*aj)
+		}
+		if res[i].LastMessageAt.Equal(res[j].LastMessageAt) {
+			return res[i].ID > res[j].ID
+		}
+		return res[i].LastMessageAt.After(res[j].LastMessageAt)
+	})
 
-		c.JSON(200, res)
+	if filter.Offset >= len(res) {
+		return make([]domain.Chat, 0)
+	}
+	end := filter.Offset + filter.Limit
+	if end > len(res) {
+		end = len(res)
+	}
+	return res[filter.Offset:end]
+}
+
+func (h *Handler) ListChats(c *gin.Context) {
+	filter, err := parseChatFilter(c)
+	if err != nil {
+		handleUsecaseError(c, err, "")
 		return
 	}
 
-	chats, err := h.chatUsecase.ListByCompany(c.Request.Context(), companyID, status, employeeID)
+	if h.chatUsecase == nil {
+		c.JSON(http.StatusOK, filterMockChats(filter))
+		return
+	}
+
+	chats, err := h.chatUsecase.ListByFilter(c.Request.Context(), filter)
 	if err != nil {
-		handleUsecaseError(c, err, "")
+		handleUsecaseError(c, err, "chats not found")
 		return
 	}
 	if chats == nil {
 		chats = make([]domain.Chat, 0)
 	}
-	c.JSON(200, chats)
+	c.JSON(http.StatusOK, chats)
 }
 
 func (h *Handler) GetChatByID(c *gin.Context) {
