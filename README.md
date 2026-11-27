@@ -51,6 +51,12 @@ docker run --rm -p 8080:8080 ghcr.io/kraconst/go-server:1
 | `DB_PASSWORD` | `telecorp_secret`  | пароль базы данных            |
 | `DB_NAME`     | `telecorp_db`      | имя базы данных               |
 | `DB_SSLMODE`  | `disable`          | режим SSL для подключения к БД|
+| `AI_API_BASE_URL` | `https://api.openai.com/v1` | base URL OpenAI-совместимого API |
+| `AI_API_KEY`  | пусто              | ключ AI; пусто — AI отключён, generate отвечает `503` |
+| `AI_MODEL`    | —                  | модель AI; без неё AI отключён |
+| `AI_TIMEOUT`  | `30s`              | таймаут запроса к AI (Go duration, не больше `5m`); `WriteTimeout` и ожидание HTTP-запросов при остановке = `AI_TIMEOUT + 5s` (плюс до 5s на фоновый воркер) |
+| `AI_MAX_MESSAGES` | `50`           | максимум сообщений в контексте AI |
+| `AI_MAX_CHARS` | `12000`           | максимум символов текста сообщений в контексте AI |
 
 ### База данных (PostgreSQL)
 

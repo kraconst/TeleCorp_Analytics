@@ -142,3 +142,43 @@ type ChatSummaryRepository interface {
 	Upsert(ctx context.Context, summary domain.ChatSummary) error
 	GetByChatID(ctx context.Context, companyID, chatID int64) (*domain.ChatSummary, error)
 }
+
+// AnalyzeChatInput — контекст AI-анализа диалога (RFC 02, D3).
+type AnalyzeChatInput struct {
+	Messages []domain.Message    // хронологически, не более AI_MAX_MESSAGES
+	Previous *domain.ChatSummary // nil, если саммари ещё нет
+}
+
+// AIAnalysisResult — провалидированный результат AI-анализа диалога.
+type AIAnalysisResult struct {
+	Topic, Agreements, NextStep, OpenQuestions string
+	Risk                                       domain.RiskLevel
+	SuggestedStatus                            *domain.ChatStatus // nil — не менять статус
+	AlertTypes                                 []domain.AlertType // после фильтрации в internal/ai: только complaint|refusal|negative|urgent, без дублей
+}
+
+// ChatSummarizer строит AI-выжимку диалога. Реализуется internal/ai.
+type ChatSummarizer interface {
+	AnalyzeChat(ctx context.Context, in AnalyzeChatInput) (*AIAnalysisResult, error)
+}
+
+// ChatAnalysisHandler применяет результат анализа (автостатусы и алерты, трек 2B).
+type ChatAnalysisHandler interface {
+	HandleAnalysis(ctx context.Context, companyID, chatID int64, res AIAnalysisResult) error
+}
+
+// ErrAIRetryable — retryable-маркер для фоновой очереди (D6); оборачивается вместе с domain.ErrUnavailable.
+var ErrAIRetryable = errors.New("ai: retryable")
+
+// RetryAfterError exposes the provider's Retry-After hint on retryable AI errors.
+// A negative duration means the hint is absent or invalid. Zero means retry immediately.
+type RetryAfterError interface {
+	error
+	RetryAfter() time.Duration
+}
+
+// RecentMessageRepository — узкий интерфейс последних сообщений чата (2A).
+type RecentMessageRepository interface {
+	// Последние limit сообщений чата компании в хронологическом порядке (ASC).
+	ListLatestByChat(ctx context.Context, companyID, chatID int64, limit int) ([]domain.Message, error)
+}

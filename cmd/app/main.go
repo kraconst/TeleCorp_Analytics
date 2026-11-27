@@ -7,17 +7,28 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/kraconst/GO_server/internal/ai"
 	"github.com/kraconst/GO_server/internal/config"
 	"github.com/kraconst/GO_server/internal/handler"
 	"github.com/kraconst/GO_server/internal/storage/postgres"
 	"github.com/kraconst/GO_server/internal/telegram"
 	"github.com/kraconst/GO_server/internal/usecase"
+)
+
+const (
+	// workerStopTimeout — сколько ждать фоновые воркеры после отмены их контекста:
+	// отмена сразу прерывает AI-запрос, поэтому фиксированных 5s достаточно.
+	workerStopTimeout = 5 * time.Second
+	// requestReserve — запас сверх AI_TIMEOUT для синхронного generate (RFC 02, Q4).
+	requestReserve = 5 * time.Second
 )
 
 func main() {
@@ -41,6 +52,11 @@ func run(ctx context.Context, args []string) error {
 		if !cfg.Telegram.Configured() {
 			return usecase.ErrTelegramUnavailable
 		}
+	}
+
+	summarizer, err := newSummarizer(cfg.AI)
+	if err != nil {
+		log.Fatalf("AI client configuration failed: %v", err)
 	}
 
 	db, err := postgres.New(cfg.DB.DSN())
@@ -78,7 +94,11 @@ func run(ctx context.Context, args []string) error {
 	accountDailyStatsUsecase := usecase.NewAccountDailyStatsUsecase(accountDailyStatsRepo, accountRepo)
 	alertUsecase := usecase.NewAlertUsecase(alertRepo, chatRepo, accountRepo)
 	companyUsecase := usecase.NewCompanyUsecase(companyRepo)
-	summaryUsecase := usecase.NewChatSummaryUsecase(summaryRepo, chatRepo, accountRepo)
+	// ChatAnalysisHandler = nil до трека 2B (автостатусы/алерты).
+	// Когда Группа 1 добавит SyncUsecase, передать summaryUsecase.Enqueue как OnChatUpdated (RFC 02, D4).
+	summaryUsecase := usecase.NewChatSummaryUsecaseWithAI(
+		summaryRepo, chatRepo, accountRepo, messageRepo, summarizer, nil, cfg.AI.MaxMessages,
+	)
 	userUsecase := usecase.NewUserUsecase(userRepo, employeeRepo)
 
 	h := handler.New(
@@ -100,7 +120,11 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		log.Printf("Telegram sync disabled: %v", err)
 	} else {
-		syncer := usecase.NewSyncUsecase(postgres.NewTelegramSyncStorage(db), client, usecase.SyncOptions{})
+		syncer := usecase.NewSyncUsecase(postgres.NewTelegramSyncStorage(db), client, usecase.SyncOptions{
+			OnChatUpdated: func(_ context.Context, companyID, chatID int64) {
+				summaryUsecase.Enqueue(companyID, chatID)
+			},
+		})
 		h.SetAccountSync(syncer)
 		workers.Go(func() { syncer.RunNotifications(appCtx) })
 		if cfg.Telegram.SyncEnabled {
@@ -112,14 +136,21 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 
+	// requestBudget — WriteTimeout и время graceful shutdown: синхронный generate
+	// успевает завершиться (AI_TIMEOUT ≤ 5m гарантирует config, переполнения нет).
+	requestBudget := cfg.AI.Timeout + requestReserve
+
 	srv := &http.Server{
 		Addr:         cfg.Addr,
 		Handler:      h.InitRoutes(),
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		WriteTimeout: requestBudget,
 		IdleTimeout:  60 * time.Second,
 		BaseContext:  func(net.Listener) context.Context { return appCtx },
 	}
+
+	// Воркер AI-саммаризации запускается всегда: без AI Enqueue — no-op, Run просто ждёт отмены.
+	workers.Go(func() { summaryUsecase.Run(appCtx) })
 
 	serveDone := make(chan error, 1)
 	go func() {
@@ -135,17 +166,27 @@ func run(ctx context.Context, args []string) error {
 			serveErr = nil
 		}
 	}
-	cancelApp()
-	log.Print("Shutting down server and Telegram worker")
+	log.Print("Shutting down server and background workers")
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), requestBudget)
 	defer cancel()
 
 	shutdownErr := srv.Shutdown(shutdownCtx)
 	if shutdownErr != nil {
 		shutdownErr = errors.Join(shutdownErr, srv.Close())
 	}
-	workers.Wait()
+	cancelApp()
+	workersDone := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(workersDone)
+	}()
+	select {
+	case <-workersDone:
+		log.Println("Background workers stopped")
+	case <-time.After(workerStopTimeout):
+		log.Printf("Background workers did not stop within %s", workerStopTimeout)
+	}
 	return errors.Join(serveErr, shutdownErr)
 }
 
@@ -162,4 +203,35 @@ func reportTelegramSync(account usecase.SyncAccountRef, result usecase.SyncResul
 		log.Printf("Telegram sync dropped %d chat notifications for company %d account %d",
 			result.NotificationsDropped, account.CompanyID, account.AccountID)
 	}
+}
+
+// newSummarizer собирает AI-клиент. Без ключа или модели возвращает литеральный nil
+// (AI отключён, generate → 503). Ни ключ, ни его фрагменты не логируются.
+func newSummarizer(cfg config.AIConfig) (usecase.ChatSummarizer, error) {
+	if !cfg.Enabled() {
+		log.Println("AI отключён: AI_API_KEY не задан")
+		return nil, nil
+	}
+	if strings.TrimSpace(cfg.Model) == "" {
+		log.Println("AI отключён: не задан AI_MODEL")
+		return nil, nil
+	}
+	client, err := ai.NewClient(cfg.BaseURL, cfg.APIKey, cfg.Model, cfg.Timeout, cfg.MaxChars)
+	if err != nil {
+		return nil, err
+	}
+	log.Printf("AI включён: model=%s, base=%s", cfg.Model, baseHost(cfg.BaseURL))
+	return client, nil
+}
+
+// baseHost возвращает только host base URL (без пути); URL уже проверен ai.NewClient.
+func baseHost(raw string) string {
+	if raw == "" {
+		raw = ai.DefaultBaseURL
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "invalid"
+	}
+	return u.Host
 }
