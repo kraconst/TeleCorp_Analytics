@@ -68,7 +68,7 @@ func (u *AlertUsecase) createAlert(ctx context.Context, alert domain.Alert, veri
 		}
 	}
 
-	exists, err := u.alerts.ExistsActive(ctx, alert.ChatID, alert.Type)
+	exists, err := u.alerts.ExistsActive(ctx, alert.CompanyID, alert.ChatID, alert.Type)
 	if err != nil {
 		return 0, fmt.Errorf("usecase check active alert: %w", err)
 	}
@@ -78,6 +78,9 @@ func (u *AlertUsecase) createAlert(ctx context.Context, alert domain.Alert, veri
 
 	id, err := u.alerts.Create(ctx, alert)
 	if err != nil {
+		if errors.Is(err, domain.ErrConflict) {
+			return 0, nil
+		}
 		return 0, fmt.Errorf("usecase create alert: %w", err)
 	}
 	return id, nil
@@ -87,18 +90,19 @@ func (u *AlertUsecase) verifyChatCompany(ctx context.Context, companyID, chatID 
 	if u.chats == nil {
 		return nil
 	}
+	if u.accounts == nil {
+		return errors.New("alert usecase: account repository is not configured")
+	}
 	chat, err := u.chats.GetByID(ctx, chatID)
 	if err != nil {
 		return err
 	}
-	if u.accounts != nil {
-		acc, err := u.accounts.GetByID(ctx, chat.AccountID)
-		if err != nil {
-			return err
-		}
-		if acc.CompanyID != companyID {
-			return fmt.Errorf("%w: chat belongs to a different company", domain.ErrForbidden)
-		}
+	acc, err := u.accounts.GetByID(ctx, chat.AccountID)
+	if err != nil {
+		return err
+	}
+	if acc.CompanyID != companyID {
+		return fmt.Errorf("%w: chat belongs to a different company", domain.ErrForbidden)
 	}
 	return nil
 }
@@ -123,14 +127,18 @@ func (u *AlertUsecase) ApplyAIAnalysis(ctx context.Context, companyID, chatID in
 			return fmt.Errorf("%w: invalid AI alert type '%s'", domain.ErrValidation, alertType)
 		}
 	}
+	if u.chats == nil || u.accounts == nil {
+		return errors.New("alert usecase: chat or account repository is not configured")
+	}
 
 	if err := u.verifyChatCompany(ctx, companyID, chatID); err != nil {
 		return err
 	}
 
-	if result.SuggestedStatus != nil && u.chats != nil {
-		if err := u.chats.UpdateAutoStatus(ctx, chatID, *result.SuggestedStatus); err != nil {
-			return fmt.Errorf("usecase apply auto status: %w", err)
+	var errs []error
+	if result.SuggestedStatus != nil {
+		if err := u.chats.UpdateAutoStatus(ctx, companyID, chatID, *result.SuggestedStatus); err != nil {
+			errs = append(errs, fmt.Errorf("usecase apply auto status: %w", err))
 		}
 	}
 
@@ -148,12 +156,12 @@ func (u *AlertUsecase) ApplyAIAnalysis(ctx context.Context, companyID, chatID in
 				Type:      alertType,
 				CreatedAt: now,
 			}, false); err != nil {
-				return err
+				errs = append(errs, fmt.Errorf("alert type %s: %w", alertType, err))
 			}
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // CheckNoReplyAlerts находит диалоги, превысившие порог ожидания ответа компании,

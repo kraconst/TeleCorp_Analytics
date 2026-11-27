@@ -48,7 +48,7 @@
     2. `zone-storage-postgres` — `internal/storage/postgres/chat.go` (`ListByFilter` с параметризованным SQL и экранированием `ILIKE`), `internal/storage/postgres/chat_contact_test.go` (unit-тесты `ListByFilter` на `mock_pg`). `ListByCompany` сохраняется без изменений.
     3. `zone-usecase` — `internal/usecase/interfaces.go` (добавление `ListByFilter` в `ChatRepository` при сохранении `ListByCompany`), `internal/usecase/chat.go` (`ListByFilter` с валидацией всех полей и дефолтами), `internal/usecase/chat_test.go` (обновление `mockChatRepo` и тесты `ListByFilter`).
     4. `zone-handler-api` — `internal/handler/handler.go` (обновление `ListChats` для всех query-параметров в mock- и usecase-ветках), `internal/handler/handler_test.go` (добавление `ListByFilter` в `handlerMockChatRepo`), `internal/handler/chat_filter_test.go` (новые тесты всех параметров и граничных случаев).
-  - **Out of Scope (Do Not Touch):** `cmd/`, `internal/config/`, `internal/telegram/`, `internal/ai/`, `migrations/`, `go.mod`, `go.sum`, `Dockerfile`, `docker-compose.yml`. Integration blockers отсутствуют.
+  - **Out of Scope (Do Not Touch):** `cmd/`, `internal/config/`, `internal/telegram/`, `internal/ai/`, `go.mod`, `go.sum`, `Dockerfile`, `docker-compose.yml`. Integration blockers отсутствуют. (Миграция `000010_chat_search_trgm_indexes.{up,down}.sql` добавлена по явному запросу пользователя для закрытия риска `ILIKE` без индексов.)
 - **Зависимости и интерфейсы:** `handler -> usecase -> domain`, `storage/postgres -> domain` (реализует `usecase.ChatRepository`).
 - **Ошибки:** невалидные параметры → `domain.ErrValidation` → HTTP `400 Bad Request`; ошибки БД → обёрнутая ошибка / `mapPgError` → HTTP `500`.
 - **Транзакционность:** не требуется (read-only `SELECT`).

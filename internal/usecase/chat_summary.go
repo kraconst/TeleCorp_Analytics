@@ -118,11 +118,19 @@ func (u *ChatSummaryUsecase) aiEnabled() bool {
 
 // SetAnalysisHandler регистрирует обработчик результата AI-анализа.
 func (u *ChatSummaryUsecase) SetAnalysisHandler(fn AIAnalysisHandler) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
 	if fn == nil {
 		u.analysis = nil
 		return
 	}
 	u.analysis = fn
+}
+
+func (u *ChatSummaryUsecase) getAnalysisHandler() ChatAnalysisHandler {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.analysis
 }
 
 // ApplyAnalysisResult передаёт результат AI-анализа зарегистрированному обработчику автостатусов и алертов.
@@ -136,10 +144,11 @@ func (u *ChatSummaryUsecase) ApplyAnalysisResult(ctx context.Context, companyID,
 	if result == nil {
 		return fmt.Errorf("%w: analysis result is required", domain.ErrValidation)
 	}
-	if u.analysis == nil {
+	handler := u.getAnalysisHandler()
+	if handler == nil {
 		return nil
 	}
-	return u.analysis.HandleAnalysis(ctx, companyID, chatID, *result)
+	return handler.HandleAnalysis(ctx, companyID, chatID, *result)
 }
 
 func (u *ChatSummaryUsecase) Upsert(ctx context.Context, companyID int64, summary domain.ChatSummary) error {
@@ -312,8 +321,8 @@ func (u *ChatSummaryUsecase) Generate(ctx context.Context, companyID, chatID int
 	}
 
 	// 9. Применение анализа: частичный успех маркируется только в логе (Q11).
-	if u.analysis != nil {
-		if err := u.analysis.HandleAnalysis(ctx, companyID, chatID, *res); err != nil {
+	if handler := u.getAnalysisHandler(); handler != nil {
+		if err := handler.HandleAnalysis(ctx, companyID, chatID, *res); err != nil {
 			log.Printf("chat summary: analysis handler failed (summary saved): company_id=%d chat_id=%d err=%v", companyID, chatID, err)
 		}
 	}

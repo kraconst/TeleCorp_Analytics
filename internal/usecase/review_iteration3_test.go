@@ -63,7 +63,7 @@ func (m *mockChatRepoStub) ListByFilter(ctx context.Context, filter domain.ChatF
 func (m *mockChatRepoStub) UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error {
 	return nil
 }
-func (m *mockChatRepoStub) UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error {
+func (m *mockChatRepoStub) UpdateAutoStatus(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) error {
 	return nil
 }
 

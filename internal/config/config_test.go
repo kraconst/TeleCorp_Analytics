@@ -216,6 +216,7 @@ func TestConfig_FormatDoesNotLeakAPIKey(t *testing.T) {
 func TestMust_AlertCheckInterval(t *testing.T) {
 	t.Run("default when unset", func(t *testing.T) {
 		clearAIEnv(t)
+		t.Setenv("NO_REPLY_CHECK_INTERVAL", "")
 		t.Setenv("ALERT_CHECK_INTERVAL", "")
 		cfg := Must()
 		if cfg.Alerts.CheckInterval != DefaultAlertCheckInterval {
@@ -223,9 +224,20 @@ func TestMust_AlertCheckInterval(t *testing.T) {
 		}
 	})
 
-	t.Run("custom positive duration", func(t *testing.T) {
+	t.Run("prefers NO_REPLY_CHECK_INTERVAL with trim", func(t *testing.T) {
 		clearAIEnv(t)
+		t.Setenv("NO_REPLY_CHECK_INTERVAL", " 45s ")
 		t.Setenv("ALERT_CHECK_INTERVAL", "15s")
+		cfg := Must()
+		if cfg.Alerts.CheckInterval != 45*time.Second {
+			t.Fatalf("expected 45s, got %s", cfg.Alerts.CheckInterval)
+		}
+	})
+
+	t.Run("custom positive duration via ALERT_CHECK_INTERVAL fallback", func(t *testing.T) {
+		clearAIEnv(t)
+		t.Setenv("NO_REPLY_CHECK_INTERVAL", "")
+		t.Setenv("ALERT_CHECK_INTERVAL", " 15s ")
 		cfg := Must()
 		if cfg.Alerts.CheckInterval != 15*time.Second {
 			t.Fatalf("expected 15s, got %s", cfg.Alerts.CheckInterval)
@@ -235,6 +247,7 @@ func TestMust_AlertCheckInterval(t *testing.T) {
 	t.Run("invalid or non-positive falls back to default", func(t *testing.T) {
 		for _, val := range []string{"invalid", "0s", "-5s"} {
 			clearAIEnv(t)
+			t.Setenv("NO_REPLY_CHECK_INTERVAL", "")
 			t.Setenv("ALERT_CHECK_INTERVAL", val)
 			cfg := Must()
 			if cfg.Alerts.CheckInterval != DefaultAlertCheckInterval {
@@ -242,4 +255,31 @@ func TestMust_AlertCheckInterval(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestConfig_FormatDoesNotLeakDBOrTelegramSecrets(t *testing.T) {
+	clearAIEnv(t)
+	t.Setenv("DB_PASSWORD", "super-secret-db-pass")
+	t.Setenv("TELEGRAM_API_HASH", "super-secret-tg-hash")
+	t.Setenv("TELEGRAM_PROXY", "http://proxyuser:proxypass@127.0.0.1:8080")
+	t.Setenv("USE_PROXY", "true")
+	t.Setenv("TELEGRAM_SESSION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	for _, out := range []string{
+		fmt.Sprintf("%v", cfg),
+		fmt.Sprintf("%+v", cfg),
+		fmt.Sprintf("%#v", cfg),
+		cfg.DB.String(),
+		cfg.Telegram.String(),
+	} {
+		for _, secret := range []string{"super-secret-db-pass", "super-secret-tg-hash", "proxypass"} {
+			if strings.Contains(out, secret) {
+				t.Errorf("formatted config leaks %q: %s", secret, out)
+			}
+		}
+	}
 }

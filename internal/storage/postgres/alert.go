@@ -46,16 +46,16 @@ func (s *AlertStorage) Create(ctx context.Context, alert domain.Alert) (int64, e
 	return id, nil
 }
 
-func (s *AlertStorage) ExistsActive(ctx context.Context, chatID int64, alertType domain.AlertType) (bool, error) {
+func (s *AlertStorage) ExistsActive(ctx context.Context, companyID, chatID int64, alertType domain.AlertType) (bool, error) {
 	const query = `
 		SELECT EXISTS (
 			SELECT 1
 			FROM alerts
-			WHERE chat_id = $1 AND type = $2 AND resolved_at IS NULL
+			WHERE company_id = $1 AND chat_id = $2 AND type = $3 AND resolved_at IS NULL
 		)
 	`
 	var exists bool
-	if err := s.db.GetContext(ctx, &exists, query, chatID, alertType); err != nil {
+	if err := s.db.GetContext(ctx, &exists, query, companyID, chatID, alertType); err != nil {
 		return false, fmt.Errorf("check active alert exists: %w", err)
 	}
 	return exists, nil

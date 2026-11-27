@@ -72,11 +72,11 @@ func (s *demoAlertStore) Create(context.Context, domain.Alert) (int64, error) {
 	return 0, errors.New("demo alerts are read-only except for resolution")
 }
 
-func (s *demoAlertStore) ExistsActive(_ context.Context, chatID int64, alertType domain.AlertType) (bool, error) {
+func (s *demoAlertStore) ExistsActive(_ context.Context, companyID, chatID int64, alertType domain.AlertType) (bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for _, alert := range s.alerts {
-		if alert.ChatID == chatID && alert.Type == alertType && alert.ResolvedAt == nil {
+		if alert.CompanyID == companyID && alert.ChatID == chatID && alert.Type == alertType && alert.ResolvedAt == nil {
 			return true, nil
 		}
 	}

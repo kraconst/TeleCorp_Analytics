@@ -70,7 +70,7 @@ func (r *genChatRepo) UpdateStatus(context.Context, int64, domain.ChatStatus, do
 	return errors.New("genChatRepo.UpdateStatus: not implemented")
 }
 
-func (r *genChatRepo) UpdateAutoStatus(context.Context, int64, domain.ChatStatus) error {
+func (r *genChatRepo) UpdateAutoStatus(context.Context, int64, int64, domain.ChatStatus) error {
 	return errors.New("genChatRepo.UpdateAutoStatus: not implemented")
 }
 

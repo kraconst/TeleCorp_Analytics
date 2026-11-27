@@ -86,11 +86,6 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 
-	summarizer, err := newSummarizer(cfg.AI)
-	if err != nil {
-		log.Fatalf("AI client configuration failed: %v", err)
-	}
-
 	db, err := postgres.New(cfg.DB.DSN())
 	if err != nil {
 		return fmt.Errorf("PostgreSQL connection failed: %w (run 'docker compose up -d' to start database)", err)
@@ -100,6 +95,11 @@ func run(ctx context.Context, args []string) error {
 	accountRepo := postgres.NewAccountStorage(db)
 	if len(args) > 0 {
 		return runTelegramImport(ctx, cfg.Telegram, accountRepo, enrollment)
+	}
+
+	summarizer, err := newSummarizer(cfg.AI)
+	if err != nil {
+		return fmt.Errorf("AI client configuration failed: %w", err)
 	}
 
 	// Run pending migrations automatically with advisory lock
@@ -144,7 +144,9 @@ func run(ctx context.Context, args []string) error {
 		summaryUsecase,
 		userUsecase,
 	)
-	appCtx, cancelApp := context.WithCancel(ctx)
+	// appCtx отделён от сигнального ctx, чтобы srv.Shutdown успел завершить in-flight HTTP-запросы
+	// в пределах requestBudget, и только потом cancelApp() останавливал фоновые воркеры.
+	appCtx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
 	var workers sync.WaitGroup
 	client, err := telegram.NewSyncClient(cfg.Telegram, accountRepo)

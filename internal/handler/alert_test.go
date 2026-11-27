@@ -81,7 +81,7 @@ func (s alertHandlerRepoStub) Create(context.Context, domain.Alert) (int64, erro
 	return 0, errors.New("not used by HTTP API")
 }
 
-func (s alertHandlerRepoStub) ExistsActive(context.Context, int64, domain.AlertType) (bool, error) {
+func (s alertHandlerRepoStub) ExistsActive(context.Context, int64, int64, domain.AlertType) (bool, error) {
 	return false, nil
 }
 

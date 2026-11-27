@@ -831,7 +831,7 @@ func TestChatStorage_UpdateAutoStatus(t *testing.T) {
 	storage := postgres.NewChatStorage(db)
 	ctx := context.Background()
 
-	t.Run("updates status to auto only when status_source != manual", func(t *testing.T) {
+	t.Run("updates status to auto only when status_source != manual and company matches", func(t *testing.T) {
 		var capturedQuery string
 		var capturedArgs []driver.Value
 
@@ -841,7 +841,7 @@ func TestChatStorage_UpdateAutoStatus(t *testing.T) {
 			return mockResult{rowsAffected: 1}, nil
 		}
 
-		if err := storage.UpdateAutoStatus(ctx, 42, domain.ChatStatusInterested); err != nil {
+		if err := storage.UpdateAutoStatus(ctx, 7, 42, domain.ChatStatusInterested); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -849,11 +849,12 @@ func TestChatStorage_UpdateAutoStatus(t *testing.T) {
 		if !strings.Contains(cleanQ, "set status = $1, status_source = 'auto'") {
 			t.Errorf("query missing auto status assignment: %s", capturedQuery)
 		}
-		if !strings.Contains(cleanQ, "where id = $2 and status_source != 'manual'") {
-			t.Errorf("query missing manual guard: %s", capturedQuery)
+		if !strings.Contains(cleanQ, "from accounts a where c.id = $2 and c.account_id = a.id and a.company_id = $3 and c.status_source != 'manual'") {
+			t.Errorf("query missing company scope or manual guard: %s", capturedQuery)
 		}
-		if len(capturedArgs) != 2 || capturedArgs[0] != string(domain.ChatStatusInterested) ||
-			(capturedArgs[1] != int64(42) && capturedArgs[1] != 42) {
+		if len(capturedArgs) != 3 || capturedArgs[0] != string(domain.ChatStatusInterested) ||
+			(capturedArgs[1] != int64(42) && capturedArgs[1] != 42) ||
+			(capturedArgs[2] != int64(7) && capturedArgs[2] != 7) {
 			t.Errorf("unexpected args: %#v", capturedArgs)
 		}
 	})
@@ -863,7 +864,7 @@ func TestChatStorage_UpdateAutoStatus(t *testing.T) {
 			return mockResult{rowsAffected: 0}, nil
 		}
 
-		if err := storage.UpdateAutoStatus(ctx, 42, domain.ChatStatusInterested); err != nil {
+		if err := storage.UpdateAutoStatus(ctx, 7, 42, domain.ChatStatusInterested); err != nil {
 			t.Fatalf("expected nil error when manual status skipped, got %v", err)
 		}
 	})
@@ -873,7 +874,7 @@ func TestChatStorage_UpdateAutoStatus(t *testing.T) {
 			return nil, errors.New("connection lost")
 		}
 
-		err := storage.UpdateAutoStatus(ctx, 1, domain.ChatStatusLost)
+		err := storage.UpdateAutoStatus(ctx, 7, 1, domain.ChatStatusLost)
 		if err == nil || !strings.Contains(err.Error(), "update auto chat status") {
 			t.Fatalf("expected wrapped error, got %v", err)
 		}

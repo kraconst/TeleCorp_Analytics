@@ -196,15 +196,19 @@ func (s *ChatStorage) UpdateStatus(ctx context.Context, id int64, status domain.
 	return nil
 }
 
-// UpdateAutoStatus updates chat status with status_source = 'auto' strictly when status_source != 'manual'.
-// If the status was set manually, the update is skipped without error.
-func (s *ChatStorage) UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error {
+// UpdateAutoStatus updates chat status with status_source = 'auto' strictly when status_source != 'manual'
+// and the chat belongs to companyID. If the status was set manually or belongs to another company, it is skipped.
+func (s *ChatStorage) UpdateAutoStatus(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) error {
 	query := `
-		UPDATE chats
+		UPDATE chats c
 		SET status = $1, status_source = 'auto'
-		WHERE id = $2 AND status_source != 'manual'
+		FROM accounts a
+		WHERE c.id = $2
+		  AND c.account_id = a.id
+		  AND a.company_id = $3
+		  AND c.status_source != 'manual'
 	`
-	if _, err := s.db.ExecContext(ctx, query, status, chatID); err != nil {
+	if _, err := s.db.ExecContext(ctx, query, status, chatID, companyID); err != nil {
 		return mapPgError(fmt.Errorf("update auto chat status: %w", err))
 	}
 	return nil

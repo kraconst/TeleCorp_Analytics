@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -36,6 +37,16 @@ type DBConfig struct {
 func (c DBConfig) DSN() string {
 	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
 		c.User, c.Password, c.Host, c.Port, c.Name, c.SSLMode)
+}
+
+func (c DBConfig) String() string {
+	return fmt.Sprintf("{Host:%s Port:%s User:%s Password:%s Name:%s SSLMode:%s}",
+		c.Host, c.Port, c.User, maskSecret(c.Password), c.Name, c.SSLMode)
+}
+
+func (c DBConfig) GoString() string {
+	return fmt.Sprintf("config.DBConfig{Host:%q, Port:%q, User:%q, Password:%q, Name:%q, SSLMode:%q}",
+		c.Host, c.Port, c.User, maskSecret(c.Password), c.Name, c.SSLMode)
 }
 
 // AIConfig — настройки OpenAI-совместимого провайдера (RFC 02, D10).
@@ -100,6 +111,45 @@ func (c TelegramConfig) Configured() bool {
 	return c.APIID > 0 && c.APIID <= math.MaxInt32 && strings.TrimSpace(c.APIHash) != "" && len(c.SessionKey) == 32
 }
 
+func (c TelegramConfig) String() string {
+	return fmt.Sprintf("{APIID:%d APIHash:%s Proxy:%s SessionKey:%s SyncEnabled:%t SyncInterval:%s SyncBatchLimit:%d}",
+		c.APIID, maskSecret(c.APIHash), maskProxyURL(c.Proxy), maskBytes(c.SessionKey), c.SyncEnabled, c.SyncInterval, c.SyncBatchLimit)
+}
+
+func (c TelegramConfig) GoString() string {
+	return fmt.Sprintf("config.TelegramConfig{APIID:%d, APIHash:%q, Proxy:%q, SessionKey:%q, SyncEnabled:%t, SyncInterval:%d, SyncBatchLimit:%d}",
+		c.APIID, maskSecret(c.APIHash), maskProxyURL(c.Proxy), maskBytes(c.SessionKey), c.SyncEnabled, int64(c.SyncInterval), c.SyncBatchLimit)
+}
+
+func maskSecret(s string) string {
+	if strings.TrimSpace(s) != "" {
+		return "[REDACTED]"
+	}
+	return "[EMPTY]"
+}
+
+func maskBytes(b []byte) string {
+	if len(b) > 0 {
+		return "[REDACTED]"
+	}
+	return "[EMPTY]"
+}
+
+func maskProxyURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "[EMPTY]"
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "[REDACTED]"
+	}
+	if u.User != nil {
+		u.User = url.UserPassword("REDACTED", "REDACTED")
+	}
+	return u.String()
+}
+
 // Load читает конфигурацию из окружения. Ошибка содержит имена некорректных переменных,
 // но не их значения.
 func Load() (Config, error) {
@@ -143,7 +193,7 @@ func Load() (Config, error) {
 			MaxChars:    maxChars,
 		},
 		Alerts: AlertConfig{
-			CheckInterval: getDurationEnv("ALERT_CHECK_INTERVAL", DefaultAlertCheckInterval),
+			CheckInterval: getDurationEnvFirst(DefaultAlertCheckInterval, "NO_REPLY_CHECK_INTERVAL", "ALERT_CHECK_INTERVAL"),
 		},
 	}, nil
 }
@@ -227,15 +277,18 @@ func positiveIntEnv(key string, fallback int) (int, error) {
 	return n, nil
 }
 
-func getDurationEnv(key string, fallback time.Duration) time.Duration {
-	val := os.Getenv(key)
-	if val == "" {
-		return fallback
+func getDurationEnvFirst(fallback time.Duration, keys ...string) time.Duration {
+	for _, key := range keys {
+		val := strings.TrimSpace(os.Getenv(key))
+		if val == "" {
+			continue
+		}
+		d, err := time.ParseDuration(val)
+		if err != nil || d <= 0 {
+			log.Printf("Invalid %s, using default %s", key, fallback)
+			return fallback
+		}
+		return d
 	}
-	d, err := time.ParseDuration(val)
-	if err != nil || d <= 0 {
-		log.Printf("Invalid %s=%q, using default %s", key, val, fallback)
-		return fallback
-	}
-	return d
+	return fallback
 }

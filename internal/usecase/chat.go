@@ -93,7 +93,7 @@ func (u *ChatUsecase) UpdateAutoStatus(ctx context.Context, companyID, chatID in
 		return err
 	}
 
-	return u.chats.UpdateAutoStatus(ctx, chatID, status)
+	return u.chats.UpdateAutoStatus(ctx, companyID, chatID, status)
 }
 
 func (u *ChatUsecase) ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error) {

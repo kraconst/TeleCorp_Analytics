@@ -12,7 +12,7 @@ import (
 
 type alertRepoStub struct {
 	create       func(context.Context, domain.Alert) (int64, error)
-	existsActive func(context.Context, int64, domain.AlertType) (bool, error)
+	existsActive func(context.Context, int64, int64, domain.AlertType) (bool, error)
 	findExpired  func(context.Context) ([]domain.NoReplyChat, error)
 	list         func(context.Context, int64) ([]domain.Alert, error)
 	resolve      func(context.Context, int64, int64) error
@@ -22,9 +22,9 @@ func (s alertRepoStub) Create(ctx context.Context, a domain.Alert) (int64, error
 	return s.create(ctx, a)
 }
 
-func (s alertRepoStub) ExistsActive(ctx context.Context, chatID int64, alertType domain.AlertType) (bool, error) {
+func (s alertRepoStub) ExistsActive(ctx context.Context, companyID, chatID int64, alertType domain.AlertType) (bool, error) {
 	if s.existsActive != nil {
-		return s.existsActive(ctx, chatID, alertType)
+		return s.existsActive(ctx, companyID, chatID, alertType)
 	}
 	return false, nil
 }
@@ -169,9 +169,9 @@ func (r *inMemoryAlertRepo) Create(_ context.Context, a domain.Alert) (int64, er
 	return a.ID, nil
 }
 
-func (r *inMemoryAlertRepo) ExistsActive(_ context.Context, chatID int64, alertType domain.AlertType) (bool, error) {
+func (r *inMemoryAlertRepo) ExistsActive(_ context.Context, companyID, chatID int64, alertType domain.AlertType) (bool, error) {
 	for _, existing := range r.alerts {
-		if existing.ChatID == chatID && existing.Type == alertType && existing.ResolvedAt == nil {
+		if existing.CompanyID == companyID && existing.ChatID == chatID && existing.Type == alertType && existing.ResolvedAt == nil {
 			return true, nil
 		}
 	}
@@ -259,7 +259,7 @@ func TestAlertCreateDeduplicatesActiveAlerts(t *testing.T) {
 func TestAlertCreatePropagatesExistsActiveError(t *testing.T) {
 	wantErr := errors.New("db failure")
 	u := usecase.NewAlertUsecase(alertRepoStub{
-		existsActive: func(context.Context, int64, domain.AlertType) (bool, error) {
+		existsActive: func(context.Context, int64, int64, domain.AlertType) (bool, error) {
 			return false, wantErr
 		},
 		create: func(context.Context, domain.Alert) (int64, error) {
@@ -289,9 +289,9 @@ func TestAlertApplyAIAnalysis_ProtectsManualStatusAndDeduplicatesAlerts(t *testi
 			cp := *c
 			return &cp, nil
 		},
-		updateAutoStatusFn: func(_ context.Context, chatID int64, status domain.ChatStatus) error {
+		updateAutoStatusFn: func(_ context.Context, companyID, chatID int64, status domain.ChatStatus) error {
 			c, ok := chatsByID[chatID]
-			if !ok {
+			if !ok || companyID != 1 {
 				return nil
 			}
 			if c.StatusSource == domain.StatusSourceManual {
@@ -376,7 +376,7 @@ func TestAlertApplyAIAnalysis_ValidationAndIsolation(t *testing.T) {
 		getByIDFn: func(_ context.Context, id int64) (*domain.Chat, error) {
 			return &domain.Chat{ID: id, AccountID: 1}, nil
 		},
-		updateAutoStatusFn: func(context.Context, int64, domain.ChatStatus) error {
+		updateAutoStatusFn: func(context.Context, int64, int64, domain.ChatStatus) error {
 			t.Fatal("UpdateAutoStatus must not be called on validation or IDOR failure")
 			return nil
 		},

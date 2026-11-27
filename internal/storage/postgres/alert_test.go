@@ -185,7 +185,7 @@ func TestAlertStorage_DeduplicationAndNoReplyQueries(t *testing.T) {
 		}
 	})
 
-	t.Run("ExistsActive queries unresolved alert by chat_id and type", func(t *testing.T) {
+	t.Run("ExistsActive queries unresolved alert by company_id, chat_id and type", func(t *testing.T) {
 		var capturedQuery string
 		var capturedArgs []driver.Value
 		mock.queryHandler = func(query string, args []driver.Value) (driver.Rows, error) {
@@ -194,15 +194,15 @@ func TestAlertStorage_DeduplicationAndNoReplyQueries(t *testing.T) {
 			return &mockRows{cols: []string{"exists"}, vals: [][]driver.Value{{true}}}, nil
 		}
 
-		exists, err := storage.ExistsActive(ctx, 15, domain.AlertTypeUrgent)
+		exists, err := storage.ExistsActive(ctx, 1, 15, domain.AlertTypeUrgent)
 		if err != nil || !exists {
 			t.Fatalf("expected exists=true, err=nil; got %v, %v", exists, err)
 		}
 		cleanQ := strings.ToLower(strings.Join(strings.Fields(capturedQuery), " "))
-		if !strings.Contains(cleanQ, "where chat_id = $1 and type = $2 and resolved_at is null") {
+		if !strings.Contains(cleanQ, "where company_id = $1 and chat_id = $2 and type = $3 and resolved_at is null") {
 			t.Errorf("ExistsActive query mismatch: %s", capturedQuery)
 		}
-		if len(capturedArgs) != 2 || capturedArgs[0] != int64(15) || capturedArgs[1] != string(domain.AlertTypeUrgent) {
+		if len(capturedArgs) != 3 || capturedArgs[0] != int64(1) || capturedArgs[1] != int64(15) || capturedArgs[2] != string(domain.AlertTypeUrgent) {
 			t.Errorf("unexpected ExistsActive args: %#v", capturedArgs)
 		}
 	})

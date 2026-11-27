@@ -118,7 +118,7 @@ type ChatRepository interface {
 	ListByCompany(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
 	ListByFilter(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
 	UpdateStatus(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
-	UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error
+	UpdateAutoStatus(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) error
 }
 
 // AccountDailyStatsRepository определяет контракт доступа к дневной аналитике аккаунтов.
@@ -134,7 +134,7 @@ type AccountDailyStatsRepository interface {
 // AlertRepository хранит уведомления и ограничивает операции компанией.
 type AlertRepository interface {
 	Create(ctx context.Context, alert domain.Alert) (int64, error)
-	ExistsActive(ctx context.Context, chatID int64, alertType domain.AlertType) (bool, error)
+	ExistsActive(ctx context.Context, companyID, chatID int64, alertType domain.AlertType) (bool, error)
 	FindExpiredNoReplyChats(ctx context.Context) ([]domain.NoReplyChat, error)
 	ListActiveByCompany(ctx context.Context, companyID int64) ([]domain.Alert, error)
 	Resolve(ctx context.Context, companyID, id int64) error

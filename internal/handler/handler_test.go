@@ -255,7 +255,7 @@ type handlerMockChatRepo struct {
 	listByCompanyFn    func(ctx context.Context, companyID int64, status *domain.ChatStatus, employeeID *int64) ([]domain.Chat, error)
 	listByFilterFn     func(ctx context.Context, filter domain.ChatFilter) ([]domain.Chat, error)
 	updateStatusFn     func(ctx context.Context, id int64, status domain.ChatStatus, source domain.StatusSource) error
-	updateAutoStatusFn func(ctx context.Context, chatID int64, status domain.ChatStatus) error
+	updateAutoStatusFn func(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) error
 }
 
 func (m *handlerMockChatRepo) Create(ctx context.Context, chat domain.Chat) (int64, error) {
@@ -288,9 +288,9 @@ func (m *handlerMockChatRepo) UpdateStatus(ctx context.Context, id int64, status
 	}
 	return nil
 }
-func (m *handlerMockChatRepo) UpdateAutoStatus(ctx context.Context, chatID int64, status domain.ChatStatus) error {
+func (m *handlerMockChatRepo) UpdateAutoStatus(ctx context.Context, companyID, chatID int64, status domain.ChatStatus) error {
 	if m.updateAutoStatusFn != nil {
-		return m.updateAutoStatusFn(ctx, chatID, status)
+		return m.updateAutoStatusFn(ctx, companyID, chatID, status)
 	}
 	return nil
 }
