@@ -9,7 +9,7 @@ Gin Handler → Usecase → Storage (PostgreSQL/sqlx) → Domain
 cmd/app/main.go — composition root
 ```
 
-Repository contracts: `internal/usecase/interfaces.go`; модели и sentinel errors: `internal/domain/`. Account и Employee — основные эталоны; порядок добавления сущности — `CONTRIBUTING.md`. `internal/ai/` — только будущая зона, сейчас модуль не существует.
+Repository contracts: `internal/usecase/interfaces.go`; модели и sentinel errors: `internal/domain/`. Account и Employee — основные эталоны; порядок добавления сущности — `CONTRIBUTING.md`. Интеграции находятся в `internal/telegram/` и `internal/ai/`.
 
 ## Обязательные инварианты
 
@@ -62,13 +62,28 @@ RFC → Orchestrator → Researcher → Coder (по зонам) → Reviewer →
 | storage | `internal/storage/postgres/` | `zone-storage-postgres` |
 | usecase | `internal/usecase/` | `zone-usecase` |
 | handler/API | `internal/handler/` | `zone-handler-api` |
-| integrations | `internal/telegram/`, будущий `internal/ai/` | `zone-integrations` |
+| integrations | `internal/telegram/`, `internal/ai/` | `zone-integrations` |
 
 Один Coder загружает ровно один zone skill. `cmd/` и `internal/config/` не входят в зоны: необходимость их изменения → `BLOCKED` и integration blocker человеку, а не неявное расширение зоны.
 
 Девять общих скиллов: `rfc-writer` (RFC), `go-researcher` (Researcher), `code-auditor` (Reviewer), `go-test-runner` (Tester) и пять `zone-*` из таблицы. Канонические файлы 3B: `.agents/skills/<id>/SKILL.md`. Отсутствие обязательного скилла → `BLOCKED`, а не универсальный fallback. В Claude Code используются одноимённые тонкие wrappers.
 
-Kimi Code CLI читает канонические skills напрямую. Используйте `.kimi-code/agents/` вместо несовместимых Antigravity-профилей из `.agents/agents/` и ручные launchers `.kimi-code/skills/`; Kimi наследует permissions родителя, поэтому нужны tool allowlists и post-check diff.
+### Режим Antigravity (стандартный расход квоты 1×)
+
+- Не используйте `--agent` и пользовательские профили `.agents/agents/*` (директория удалена намеренно: кастомные агенты и их субагенты тарифицируются с повышенным коэффициентом 4×).
+- Работайте через **агента по умолчанию** (читает `AGENTS.md` и `.agents/skills/*`) и делегируйте роли только **встроенным субагентам** (`1×`):
+  - **Researcher (read-only):** встроенный `research` с инструкцией прочитать `.agents/skills/go-researcher/SKILL.md` и `docs/agents/roles/researcher.md`.
+  - **Coder / Reviewer / Tester:** встроенный `self` с Task Packet, явным указанием роли (`docs/agents/roles/{coder,reviewer,tester}.md`) и ровно одного нужного скилла (`.agents/skills/{zone-*,code-auditor,go-test-runner}/SKILL.md`).
+- Для простых правок/вопросов, где не запрошен полный pipeline, выполняйте работу напрямую в агенте по умолчанию без лишнего спавна субагентов.
+
+## Короткие команды запуска (строго режим 1×)
+
+- Запрещено вызывать кастомных субагентов по именам (`coder`, `researcher`, `reviewer`, `tester`, `orchestrator`). Использовать только встроенных `research` (read-only поиск) и `self` (правка, аудит, тесты) с подгрузкой ролей из `docs/agents/roles/*` и скиллов из `.agents/skills/*`.
+- Если пользователь пишет «по @файл составь RFC» → действуй как агент по умолчанию по скиллу `rfc-writer` и `docs/rfc/TEMPLATE.md`, код не пиши.
+- Если пользователь пишет «по @файл выполни задачу» или «прогони полный цикл по @файл» → выступи оркестратором и проведи задачу по `docs/agents/workflows/feature-pipeline.md` в режиме 1×.
+- Если задача мелкая (один файл или правка без смены контрактов) → выполняй напрямую агентом по умолчанию без запуска субагентов и пайплайна.
+
+Kimi Code CLI читает канонические skills напрямую и использует свои профили `.kimi-code/agents/` и ручные launchers `.kimi-code/skills/`; Kimi наследует permissions родителя, поэтому нужны tool allowlists и post-check diff.
 
 ## Глобальные запреты и безопасность
 

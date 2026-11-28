@@ -81,11 +81,11 @@ func TestTelegramSyncStorageImportAndRetry(t *testing.T) {
 		t.Fatalf("updated contact name: %q, %v", name, err)
 	}
 	var stats []domain.AccountDailyStats
-	if err := db.SelectContext(ctx, &stats, `SELECT day, messages_in, messages_out, new_contacts FROM account_daily_stats WHERE account_id = 10 ORDER BY day`); err != nil {
+	if err := db.SelectContext(ctx, &stats, `SELECT day, messages_in, messages_out, active_chats, new_contacts, avg_response_time FROM account_daily_stats WHERE account_id = 10 ORDER BY day`); err != nil {
 		t.Fatal(err)
 	}
-	if len(stats) != 2 || stats[0].Day.Format(time.DateOnly) != "2026-11-26" || stats[0].MessagesIn != 1 || stats[0].MessagesOut != 0 || stats[0].NewContacts != 1 ||
-		stats[1].Day.Format(time.DateOnly) != "2026-11-27" || stats[1].MessagesIn != 2 || stats[1].MessagesOut != 1 || stats[1].NewContacts != 0 {
+	if len(stats) != 2 || stats[0].Day.Format(time.DateOnly) != "2026-11-26" || stats[0].MessagesIn != 1 || stats[0].MessagesOut != 0 || stats[0].ActiveChats != 1 || stats[0].NewContacts != 1 || stats[0].AvgResponseTime != 0 ||
+		stats[1].Day.Format(time.DateOnly) != "2026-11-27" || stats[1].MessagesIn != 2 || stats[1].MessagesOut != 1 || stats[1].ActiveChats != 1 || stats[1].NewContacts != 0 || stats[1].AvgResponseTime <= 0 {
 		t.Fatalf("company-local daily counters after retry: %+v", stats)
 	}
 	answeredAt := latest.Add(time.Minute)
@@ -107,6 +107,29 @@ func TestTelegramSyncStorageImportAndRetry(t *testing.T) {
 	var newContacts int
 	if err := db.GetContext(ctx, &newContacts, `SELECT COALESCE(SUM(new_contacts), 0) FROM account_daily_stats`); err != nil || newContacts != 1 {
 		t.Fatalf("same-company contact counted %d times: %v", newContacts, err)
+	}
+}
+
+func TestTelegramSyncStorageBurstAvgResponseTime(t *testing.T) {
+	ctx, db := newTelegramSyncTestDB(t)
+	repo := postgres.NewTelegramSyncStorage(db)
+	base := time.Date(2026, 11, 28, 7, 0, 0, 0, time.UTC) // 10:00 Europe/Moscow
+	dialog := usecase.TelegramDialog{TelegramUserID: 200, Name: "Burst Client", Username: "burst", UnreadCount: 0}
+	messages := []domain.Message{
+		{TelegramMessageID: 1, Direction: domain.MessageDirectionIn, Text: "m1", SentAt: base},
+		{TelegramMessageID: 2, Direction: domain.MessageDirectionIn, Text: "m2", SentAt: base.Add(5 * time.Minute)},
+		{TelegramMessageID: 3, Direction: domain.MessageDirectionIn, Text: "m3", SentAt: base.Add(15 * time.Minute)},
+		{TelegramMessageID: 4, Direction: domain.MessageDirectionOut, Text: "reply", SentAt: base.Add(20 * time.Minute)},
+	}
+	if _, err := repo.ImportDialog(ctx, 1, 10, dialog, messages); err != nil {
+		t.Fatalf("ImportDialog burst: %v", err)
+	}
+	var got domain.AccountDailyStats
+	if err := db.GetContext(ctx, &got, `SELECT active_chats, avg_response_time FROM account_daily_stats WHERE account_id = 10 AND day = '2026-11-28'`); err != nil {
+		t.Fatalf("select stats: %v", err)
+	}
+	if got.ActiveChats != 1 || got.AvgResponseTime != 20*time.Minute {
+		t.Fatalf("expected active_chats=1 avg_response_time=20m (from first incoming in burst), got active_chats=%d avg_response_time=%s", got.ActiveChats, got.AvgResponseTime)
 	}
 }
 

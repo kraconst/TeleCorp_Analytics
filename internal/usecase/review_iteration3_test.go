@@ -31,7 +31,7 @@ func (m *mockAccountRepoStub) ListByCompany(ctx context.Context, companyID int64
 func (m *mockAccountRepoStub) ListByEmployee(ctx context.Context, employeeID int64) ([]domain.Account, error) {
 	return nil, nil
 }
-func (m *mockAccountRepoStub) UpdateStatus(ctx context.Context, id int64, status domain.AccountStatus) error {
+func (m *mockAccountRepoStub) UpdateStatus(ctx context.Context, companyID, id int64, status domain.AccountStatus) error {
 	return nil
 }
 func (m *mockAccountRepoStub) AssignEmployee(ctx context.Context, accountID, employeeID int64) error {
@@ -100,7 +100,7 @@ func (m *mockEmployeeRepoStub) ListByCompany(ctx context.Context, companyID int6
 func (m *mockEmployeeRepoStub) Update(ctx context.Context, emp domain.Employee) error {
 	return nil
 }
-func (m *mockEmployeeRepoStub) Deactivate(ctx context.Context, id int64) error {
+func (m *mockEmployeeRepoStub) Deactivate(ctx context.Context, companyID, id int64) error {
 	return nil
 }
 

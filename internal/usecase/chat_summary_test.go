@@ -105,7 +105,7 @@ func (r *genAccountRepo) ListByEmployee(context.Context, int64) ([]domain.Accoun
 	return nil, errors.New("genAccountRepo.ListByEmployee: not implemented")
 }
 
-func (r *genAccountRepo) UpdateStatus(context.Context, int64, domain.AccountStatus) error {
+func (r *genAccountRepo) UpdateStatus(context.Context, int64, int64, domain.AccountStatus) error {
 	return errors.New("genAccountRepo.UpdateStatus: not implemented")
 }
 

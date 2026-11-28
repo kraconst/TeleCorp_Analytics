@@ -31,6 +31,7 @@ func (s *ChatSummaryStorage) Upsert(ctx context.Context, summary domain.ChatSumm
 			risk = EXCLUDED.risk,
 			last_message_id = EXCLUDED.last_message_id,
 			generated_at = EXCLUDED.generated_at
+		WHERE chat_summaries.last_message_id <= EXCLUDED.last_message_id
 	`
 	genAt := summary.GeneratedAt
 	if genAt.IsZero() {

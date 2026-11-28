@@ -50,9 +50,10 @@ type ChatSummaryUsecase struct {
 	analysis    ChatAnalysisHandler
 	maxMessages int
 
-	queue  chan summaryJob
-	mu     sync.Mutex
-	queued map[int64]struct{} // chatID задач, стоящих в очереди
+	queue      chan summaryJob
+	mu         sync.Mutex
+	queued     map[int64]struct{}      // chatID задач, стоящих в очереди
+	generating map[int64]chan struct{} // сериализация конкурентных Generate по chatID
 }
 
 // NewChatSummaryUsecase создаёт usecase без AI: Generate возвращает ErrUnavailable, Enqueue — no-op.
@@ -96,6 +97,34 @@ func NewChatSummaryUsecaseWithAI(
 		maxMessages: maxMessages,
 		queue:       make(chan summaryJob, summaryQueueSize),
 		queued:      make(map[int64]struct{}),
+		generating:  make(map[int64]chan struct{}),
+	}
+}
+
+func (u *ChatSummaryUsecase) acquireChatGen(ctx context.Context, chatID int64) (func(), error) {
+	for {
+		u.mu.Lock()
+		if u.generating == nil {
+			u.generating = make(map[int64]chan struct{})
+		}
+		wait, busy := u.generating[chatID]
+		if !busy {
+			done := make(chan struct{})
+			u.generating[chatID] = done
+			u.mu.Unlock()
+			return func() {
+				u.mu.Lock()
+				delete(u.generating, chatID)
+				close(done)
+				u.mu.Unlock()
+			}, nil
+		}
+		u.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-wait:
+		}
 	}
 }
 
@@ -265,6 +294,12 @@ func (u *ChatSummaryUsecase) Generate(ctx context.Context, companyID, chatID int
 	if !u.aiEnabled() {
 		return nil, fmt.Errorf("%w: ai summarizer is disabled", domain.ErrUnavailable)
 	}
+
+	release, err := u.acquireChatGen(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	// 4. Последние сообщения (ASC); последний элемент — «последнее сообщение» для кэша (Q3).
 	msgs, err := u.messages.ListLatestByChat(ctx, companyID, chatID, u.maxMessages)

@@ -20,18 +20,21 @@ import (
 )
 
 const (
-	syncRPCTimeout = 15 * time.Second
-	syncTimeout    = 10 * time.Minute
+	syncRPCTimeout      = 15 * time.Second
+	syncTimeout         = 10 * time.Minute
+	maxFloodWait        = 60 * time.Second
+	maxFloodWaitRetries = 3
 )
 
 // SyncClient opens same-account Telegram readers using existing authorized sessions.
 type SyncClient struct {
-	apiID    int
-	apiHash  string
-	key      []byte
-	limit    int
-	resolver dcs.Resolver
-	accounts usecase.TelegramAccountStateRepository
+	apiID       int
+	apiHash     string
+	key         []byte
+	limit       int
+	initialDays int
+	resolver    dcs.Resolver
+	accounts    usecase.TelegramAccountStateRepository
 }
 
 var _ usecase.TelegramSyncClient = (*SyncClient)(nil)
@@ -43,6 +46,10 @@ func NewSyncClient(cfg config.TelegramConfig, accounts usecase.TelegramAccountSt
 	if accounts == nil || cfg.SyncBatchLimit < 1 || cfg.SyncBatchLimit > 100 {
 		return nil, fmt.Errorf("%w: Telegram sync needs a repository and batch size in 1–100", domain.ErrValidation)
 	}
+	initialDays := cfg.SyncInitialDays
+	if initialDays <= 0 {
+		initialDays = config.DefaultTelegramSyncInitialDays
+	}
 	var resolver dcs.Resolver
 	if address := strings.TrimSpace(cfg.Proxy); address != "" {
 		dialer, err := createProxyDialer(address)
@@ -53,7 +60,7 @@ func NewSyncClient(cfg config.TelegramConfig, accounts usecase.TelegramAccountSt
 	}
 	return &SyncClient{
 		apiID: cfg.APIID, apiHash: strings.TrimSpace(cfg.APIHash), key: bytes.Clone(cfg.SessionKey),
-		limit: cfg.SyncBatchLimit, resolver: resolver, accounts: accounts,
+		limit: cfg.SyncBatchLimit, initialDays: initialDays, resolver: resolver, accounts: accounts,
 	}, nil
 }
 
@@ -73,14 +80,14 @@ func (s *SyncClient) WithAccount(ctx context.Context, companyID, accountID int64
 		defer cancel()
 	}
 	raw, err := storage.LoadSession(ctx)
-	if errors.Is(err, session.ErrNotFound) {
+	if errors.Is(err, session.ErrNotFound) || errors.Is(err, errUnreadableAccountSession) {
 		return s.recordSessionFailure(ctx, companyID, accountID, domain.StatusDisconnected, err)
 	}
 	if err != nil {
 		return err
 	}
 	data, err := s.runSavedSession(ctx, raw, func(ctx context.Context, self *tg.User, api *tg.Client) error {
-		return fn(ctx, &accountReader{api: api, limit: s.limit, selfID: self.ID})
+		return fn(ctx, &accountReader{api: api, limit: s.limit, initialDays: s.initialDays, selfID: self.ID})
 	})
 	if err != nil {
 		if ctx.Err() == nil {
@@ -192,6 +199,7 @@ func rejectedSessionStatus(err error) domain.AccountStatus {
 	case tgerr.Is(err, "USER_DEACTIVATED_BAN", "PHONE_NUMBER_BANNED"):
 		return domain.StatusBanned
 	case errors.Is(err, usecase.ErrTelegramSessionInvalid),
+		errors.Is(err, errUnreadableAccountSession),
 		tgerr.Is(err, "SESSION_REVOKED", "SESSION_EXPIRED", "AUTH_KEY_UNREGISTERED", "AUTH_KEY_INVALID", "AUTH_KEY_DUPLICATED", "USER_DEACTIVATED"):
 		return domain.StatusDisconnected
 	default:
@@ -201,13 +209,16 @@ func rejectedSessionStatus(err error) domain.AccountStatus {
 
 func retryTelegramRPC[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
 	var zero T
-	for ctx.Err() == nil {
+	for attempt := 0; ctx.Err() == nil; attempt++ {
 		attemptCtx, cancel := context.WithTimeout(ctx, syncRPCTimeout)
 		result, err := call(attemptCtx)
 		cancel()
 		wait, limited := tgerr.AsFloodWait(err)
 		if !limited {
 			return result, err
+		}
+		if wait > maxFloodWait || attempt >= maxFloodWaitRetries {
+			return zero, err
 		}
 		timer := time.NewTimer(wait)
 		select {

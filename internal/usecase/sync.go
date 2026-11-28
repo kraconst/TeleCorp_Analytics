@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -83,13 +84,18 @@ func (u *SyncUsecase) SyncAccount(ctx context.Context, companyID, accountID int6
 		if err != nil {
 			return fmt.Errorf("list dialogs for sync: %w", err)
 		}
+		var dialogErrs []error
 		for _, dialog := range dialogs {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
 			imported, err := u.syncDialog(ctx, ref, reader, dialog)
 			if err != nil {
-				return err
+				if ctx.Err() != nil || errors.Is(err, ErrTelegramSessionInvalid) || errors.Is(err, domain.ErrConflict) {
+					return err
+				}
+				dialogErrs = append(dialogErrs, fmt.Errorf("dialog %d: %w", dialog.TelegramUserID, err))
+				continue
 			}
 			result.ChatsProcessed++
 			result.NewMessages += imported.NewMessages
@@ -101,7 +107,7 @@ func (u *SyncUsecase) SyncAccount(ctx context.Context, companyID, accountID int6
 				}
 			}
 		}
-		return nil
+		return errors.Join(dialogErrs...)
 	})
 	return result, err
 }
@@ -127,6 +133,9 @@ func (u *SyncUsecase) syncDialog(ctx context.Context, ref SyncAccountRef, reader
 			return SyncDialogResult{}, fmt.Errorf("invalid message metadata from Telegram")
 		}
 		newMessages = append(newMessages, message)
+	}
+	if checkpoint == 0 && len(newMessages) == 0 && !dialog.LastMessageAt.IsZero() {
+		return SyncDialogResult{}, nil
 	}
 	imported, err := u.repo.ImportDialog(ctx, ref.CompanyID, ref.AccountID, dialog, newMessages)
 	if err != nil {

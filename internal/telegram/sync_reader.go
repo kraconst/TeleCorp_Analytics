@@ -16,16 +16,28 @@ import (
 )
 
 type accountReader struct {
-	api    syncRPC
-	limit  int
-	selfID int64
-	peers  map[int64]*tg.InputPeerUser
+	api         syncRPC
+	limit       int
+	initialDays int
+	now         func() time.Time
+	selfID      int64
+	peers       map[int64]*tg.InputPeerUser
+	topDates    map[int64]int64
 }
 
 func (r *accountReader) ListDialogs(ctx context.Context) ([]usecase.TelegramDialog, error) {
 	result := make([]usecase.TelegramDialog, 0)
 	peers := make(map[int64]*tg.InputPeerUser)
-	collect := func(dialogs []tg.DialogClass, users map[int64]*tg.User) {
+	topDates := make(map[int64]int64)
+	collect := func(dialogs []tg.DialogClass, users map[int64]*tg.User, messages []tg.MessageClass) {
+		msgDates := make(map[dialogTopKey]int64, len(messages))
+		for _, entry := range messages {
+			msg, ok := entry.AsNotEmpty()
+			if !ok || msg.GetDate() <= 0 {
+				continue
+			}
+			msgDates[dialogTopKey{peer: dialogPeerKey(msg.GetPeerID()), id: msg.GetID()}] = int64(msg.GetDate())
+		}
 		for _, item := range dialogs {
 			dialog, ok := item.(*tg.Dialog)
 			if !ok {
@@ -45,8 +57,13 @@ func (r *accountReader) ListDialogs(ctx context.Context) ([]usecase.TelegramDial
 				continue
 			}
 			peers[peer.UserID] = &tg.InputPeerUser{UserID: peer.UserID, AccessHash: hash}
+			var lastMsgAt time.Time
+			if topDate := msgDates[dialogTopKey{peer: telegramPeerKey{kind: "user", id: peer.UserID}, id: dialog.GetTopMessage()}]; topDate > 0 {
+				topDates[peer.UserID] = topDate
+				lastMsgAt = time.Unix(topDate, 0).UTC()
+			}
 			result = append(result, usecase.TelegramDialog{
-				TelegramUserID: peer.UserID, Name: telegramUserName(user), Username: user.Username, UnreadCount: dialog.UnreadCount,
+				TelegramUserID: peer.UserID, Name: telegramUserName(user), Username: user.Username, UnreadCount: dialog.UnreadCount, LastMessageAt: lastMsgAt,
 			})
 		}
 	}
@@ -62,16 +79,22 @@ func (r *accountReader) ListDialogs(ctx context.Context) ([]usecase.TelegramDial
 		if pinned == nil {
 			return nil, errors.New("Telegram returned no pinned dialogs response")
 		}
-		collect(pinned.Dialogs, pinned.MapUsers().UserToMap())
+		collect(pinned.Dialogs, pinned.MapUsers().UserToMap(), pinned.Messages)
 		if err := r.readUnpinnedDialogs(ctx, folder, collect); err != nil {
 			return nil, err
 		}
 	}
 	r.peers = peers
+	r.topDates = topDates
 	return result, nil
 }
 
-func (r *accountReader) readUnpinnedDialogs(ctx context.Context, folder int, collect func([]tg.DialogClass, map[int64]*tg.User)) error {
+type dialogTopKey struct {
+	peer telegramPeerKey
+	id   int
+}
+
+func (r *accountReader) readUnpinnedDialogs(ctx context.Context, folder int, collect func([]tg.DialogClass, map[int64]*tg.User, []tg.MessageClass)) error {
 	seen := make(map[dialogCursor]struct{})
 	request := tg.MessagesGetDialogsRequest{OffsetPeer: &tg.InputPeerEmpty{}, Limit: r.limit, ExcludePinned: true}
 	request.SetFolderID(folder)
@@ -87,7 +110,7 @@ func (r *accountReader) readUnpinnedDialogs(ctx context.Context, folder int, col
 			return err
 		}
 		users := tg.UserClassArray(page.GetUsers()).UserToMap()
-		collect(page.GetDialogs(), users)
+		collect(page.GetDialogs(), users, page.GetMessages())
 		if _, complete := response.(*tg.MessagesDialogs); complete || len(page.GetDialogs()) == 0 {
 			return nil
 		}
@@ -120,7 +143,7 @@ func nextDialogCursor(page tg.ModifiedMessagesDialogs, users map[int64]*tg.User,
 		}
 		key := dialogPeerKey(dialog.GetPeer())
 		if key.id <= 0 || dialog.GetTopMessage() <= 0 {
-			break
+			continue
 		}
 		for _, entry := range page.GetMessages() {
 			msg, ok := entry.AsNotEmpty()
@@ -132,7 +155,7 @@ func nextDialogCursor(page tg.ModifiedMessagesDialogs, users map[int64]*tg.User,
 			}
 			break
 		}
-		break
+		continue
 	}
 	return dialogCursor{}, nil, errors.New("cannot determine the next Telegram dialog page")
 }
@@ -176,6 +199,17 @@ func (r *accountReader) ListHistory(ctx context.Context, dialog usecase.Telegram
 		return nil, fmt.Errorf("%w: load Telegram dialogs before requesting history for this user", domain.ErrValidation)
 	}
 	request := tg.MessagesGetHistoryRequest{Peer: peer, Limit: r.limit, MinID: int(afterID)}
+	var cutoffUnix int64
+	if afterID == 0 && r.initialDays > 0 {
+		nowFn := r.now
+		if nowFn == nil {
+			nowFn = time.Now
+		}
+		cutoffUnix = nowFn().UTC().AddDate(0, 0, -r.initialDays).Unix()
+		if topDate := r.topDates[dialog.TelegramUserID]; topDate > 0 && topDate < cutoffUnix {
+			return make([]domain.Message, 0), nil
+		}
+	}
 	result := make([]domain.Message, 0)
 	seen := make(map[int]struct{})
 	for {
@@ -193,6 +227,7 @@ func (r *accountReader) ListHistory(ctx context.Context, dialog usecase.Telegram
 			return nil, fmt.Errorf("unexpected Telegram history response %T", response)
 		}
 		var oldest int
+		hitCutoff := false
 		for _, entry := range page.GetMessages() {
 			id := entry.GetID()
 			if id <= 0 || (request.OffsetID != 0 && id >= request.OffsetID) {
@@ -203,6 +238,10 @@ func (r *accountReader) ListHistory(ctx context.Context, dialog usecase.Telegram
 			}
 			message, ok := entry.(*tg.Message)
 			if !ok || int64(id) <= afterID {
+				continue
+			}
+			if cutoffUnix > 0 && int64(message.Date) < cutoffUnix {
+				hitCutoff = true
 				continue
 			}
 			if _, exists := seen[id]; !exists {
@@ -216,7 +255,7 @@ func (r *accountReader) ListHistory(ctx context.Context, dialog usecase.Telegram
 		if oldest == 0 {
 			return nil, errors.New("Telegram history pagination did not advance")
 		}
-		if _, complete := response.(*tg.MessagesMessages); complete || int64(oldest) <= afterID {
+		if _, complete := response.(*tg.MessagesMessages); complete || int64(oldest) <= afterID || hitCutoff {
 			break
 		}
 		request.OffsetID = oldest

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kraconst/GO_server/internal/domain"
 )
@@ -128,6 +129,9 @@ func (u *ChatUsecase) ListByFilter(ctx context.Context, filter domain.ChatFilter
 	}
 
 	filter.Query = strings.TrimSpace(filter.Query)
+	if utf8.RuneCountInString(filter.Query) > 200 {
+		return nil, fmt.Errorf("%w: query must be at most 200 characters", domain.ErrValidation)
+	}
 
 	if filter.SortBy == "" {
 		filter.SortBy = domain.ChatSortLastMessage

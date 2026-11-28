@@ -72,7 +72,7 @@ func (s *AccountStorage) GetByID(ctx context.Context, id int64) (*domain.Account
 	query := `
 		SELECT a.id, a.company_id, a.employee_id, a.phone, a.username,
 		       COALESCE(e.name, '') AS employee_name,
-		       a.telegram_user_id, a.status, a.session, a.last_activity_at, a.created_at
+		       a.telegram_user_id, a.status, NULL::bytea AS session, a.last_activity_at, a.created_at
 		FROM accounts a
 		LEFT JOIN employees e ON a.employee_id = e.id
 		WHERE a.id = $1
@@ -124,9 +124,9 @@ func (s *AccountStorage) ListByEmployee(ctx context.Context, employeeID int64) (
 	return accounts, nil
 }
 
-func (s *AccountStorage) UpdateStatus(ctx context.Context, id int64, status domain.AccountStatus) error {
-	query := `UPDATE accounts SET status = $1 WHERE id = $2`
-	res, err := s.db.ExecContext(ctx, query, status, id)
+func (s *AccountStorage) UpdateStatus(ctx context.Context, companyID, id int64, status domain.AccountStatus) error {
+	query := `UPDATE accounts SET status = $1 WHERE id = $2 AND company_id = $3`
+	res, err := s.db.ExecContext(ctx, query, status, id, companyID)
 	if err != nil {
 		return fmt.Errorf("update account status: %w", err)
 	}

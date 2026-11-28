@@ -247,7 +247,7 @@ func TestTelegramRPCFloodWaitHonorsCancellation(t *testing.T) {
 	go func() {
 		_, err := retryTelegramRPC(ctx, func(context.Context) (int, error) {
 			close(started)
-			return 0, tgerr.New(420, "FLOOD_WAIT_600")
+			return 0, tgerr.New(420, "FLOOD_WAIT_30")
 		})
 		finished <- err
 	}()
@@ -260,6 +260,15 @@ func TestTelegramRPCFloodWaitHonorsCancellation(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("FLOOD_WAIT ignored caller cancellation")
+	}
+
+	// HIGH-12: FLOOD_WAIT exceeding maxFloodWait must return immediately without sleeping.
+	start := time.Now()
+	_, err := retryTelegramRPC(t.Context(), func(context.Context) (int, error) {
+		return 0, tgerr.New(420, "FLOOD_WAIT_600")
+	})
+	if err == nil || time.Since(start) > time.Second {
+		t.Fatalf("expected immediate error for excessive FLOOD_WAIT, got err=%v in %s", err, time.Since(start))
 	}
 }
 
@@ -275,10 +284,13 @@ func TestTelegramSessionRejectionStatus(t *testing.T) {
 			t.Errorf("%s: got status %q, want %q", methodError, got, want)
 		}
 	}
-	for _, err := range []error{context.DeadlineExceeded, errUnreadableAccountSession, domain.ErrNotFound} {
+	for _, err := range []error{context.DeadlineExceeded, domain.ErrNotFound} {
 		if got := rejectedSessionStatus(err); got != "" {
 			t.Errorf("%v changed account status to %q", err, got)
 		}
+	}
+	if got := rejectedSessionStatus(errUnreadableAccountSession); got != domain.StatusDisconnected {
+		t.Errorf("errUnreadableAccountSession: got status %q, want %q", got, domain.StatusDisconnected)
 	}
 }
 
@@ -424,5 +436,67 @@ func TestProxyConnectHonorsCancellationWhileWaiting(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancelled CONNECT handshake did not stop")
+	}
+}
+
+func TestAccountReaderListHistoryStopsAtInitialDaysCutoff(t *testing.T) {
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	recentDate := int(now.AddDate(0, 0, -5).Unix())
+	oldDate := int(now.AddDate(0, 0, -45).Unix())
+	calls := 0
+	rpc := syncRPCStub{
+		history: func(req *tg.MessagesGetHistoryRequest) (tg.MessagesMessagesClass, error) {
+			calls++
+			if calls > 1 {
+				t.Fatal("pagination should stop once cutoff date is reached")
+			}
+			return &tg.MessagesMessagesSlice{
+				Count: 2,
+				Messages: []tg.MessageClass{
+					&tg.Message{ID: 10, Date: recentDate, Message: "recent"},
+					&tg.Message{ID: 5, Date: oldDate, Message: "too old"},
+				},
+			}, nil
+		},
+	}
+	reader := &accountReader{
+		api:         rpc,
+		limit:       2,
+		initialDays: 30,
+		now:         func() time.Time { return now },
+		peers:       map[int64]*tg.InputPeerUser{42: {UserID: 42, AccessHash: 1}},
+	}
+	msgs, err := reader.ListHistory(t.Context(), usecase.TelegramDialog{TelegramUserID: 42}, 0)
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if calls != 1 || len(msgs) != 1 || msgs[0].TelegramMessageID != 10 {
+		t.Fatalf("expected 1 recent message in 1 call, got calls=%d msgs=%+v", calls, msgs)
+	}
+}
+
+func TestAccountReaderListHistorySkipsOldDialogByTopDate(t *testing.T) {
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	oldDate := now.AddDate(0, 0, -60).Unix()
+	rpc := syncRPCStub{
+		history: func(*tg.MessagesGetHistoryRequest) (tg.MessagesMessagesClass, error) {
+			t.Fatal("MessagesGetHistory must not be called for dialog whose top message is older than cutoff")
+			return nil, nil
+		},
+	}
+	reader := &accountReader{
+		api:         rpc,
+		limit:       50,
+		initialDays: 30,
+		now:         func() time.Time { return now },
+		peers:       map[int64]*tg.InputPeerUser{42: {UserID: 42, AccessHash: 1}},
+		topDates:    map[int64]int64{42: oldDate},
+	}
+	msgs, err := reader.ListHistory(t.Context(), usecase.TelegramDialog{TelegramUserID: 42}, 0)
+	if err != nil {
+		t.Fatalf("ListHistory: %v", err)
+	}
+	if len(msgs) != 0 {
+		t.Fatalf("expected empty slice, got %+v", msgs)
 	}
 }

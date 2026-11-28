@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/kraconst/GO_server/internal/domain"
@@ -200,8 +201,16 @@ type updateChatStatusRequest struct {
 	Status domain.ChatStatus `json:"status" binding:"required"`
 }
 
+const maxRequestBodyBytes int64 = 1 << 20 // 1 MiB
+
 func (h *Handler) InitRoutes() *gin.Engine {
 	r := gin.Default()
+	r.Use(func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodyBytes)
+		}
+		c.Next()
+	})
 	r.GET("/health", h.Health)
 
 	// Accounts
@@ -746,6 +755,10 @@ func parseChatFilter(c *gin.Context) (domain.ChatFilter, error) {
 		default:
 			return domain.ChatFilter{}, fmt.Errorf("%w: unanswered must be true or false", domain.ErrValidation)
 		}
+	}
+
+	if utf8.RuneCountInString(filter.Query) > 200 {
+		return domain.ChatFilter{}, fmt.Errorf("%w: q must be at most 200 characters", domain.ErrValidation)
 	}
 
 	if sortBy := c.Query("sort"); sortBy != "" {

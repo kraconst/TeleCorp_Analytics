@@ -59,6 +59,7 @@ func TestListChats_FilterValidation_InvalidParams(t *testing.T) {
 		{name: "offset large negative", query: "offset=-100"},
 		{name: "offset non-numeric", query: "offset=abc"},
 		{name: "offset padded", query: "offset=" + url.QueryEscape(" 0")},
+		{name: "q over 200 chars", query: "q=" + strings.Repeat("a", 201)},
 	}
 
 	for _, tc := range cases {

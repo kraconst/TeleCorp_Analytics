@@ -565,7 +565,7 @@ func (m *mockAccountRepoForChat) ListByCompany(ctx context.Context, companyID in
 func (m *mockAccountRepoForChat) ListByEmployee(ctx context.Context, employeeID int64) ([]domain.Account, error) {
 	return nil, nil
 }
-func (m *mockAccountRepoForChat) UpdateStatus(ctx context.Context, id int64, status domain.AccountStatus) error {
+func (m *mockAccountRepoForChat) UpdateStatus(ctx context.Context, companyID, id int64, status domain.AccountStatus) error {
 	return nil
 }
 func (m *mockAccountRepoForChat) AssignEmployee(ctx context.Context, accountID, employeeID int64) error {

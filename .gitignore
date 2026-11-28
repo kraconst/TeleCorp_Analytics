@@ -40,3 +40,6 @@ go.work.sum
 
 # Local Kimi Code permissions and machine-specific settings
 .kimi-code/local.toml
+
+# Temporary agent teamwork artifacts
+.agents/teamwork/

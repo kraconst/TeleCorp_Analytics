@@ -124,7 +124,7 @@ func (s *AccountDailyStatsStorage) GetDashboard(ctx context.Context, companyID i
 			COALESCE(
 				CASE
 					WHEN SUM(s.messages_out) > 0
-					THEN SUM(s.avg_response_time * s.messages_out) / SUM(s.messages_out)
+					THEN SUM(s.avg_response_time::NUMERIC * s.messages_out) / SUM(s.messages_out)
 					ELSE 0
 				END, 0)::BIGINT AS avg_response_time,
 			(
@@ -165,7 +165,7 @@ func (s *AccountDailyStatsStorage) GetAccountRatings(ctx context.Context, compan
 			COALESCE(
 				CASE
 					WHEN SUM(s.messages_out) > 0
-					THEN SUM(s.avg_response_time * s.messages_out) / SUM(s.messages_out)
+					THEN SUM(s.avg_response_time::NUMERIC * s.messages_out) / SUM(s.messages_out)
 					ELSE 0
 				END, 0)::BIGINT AS avg_response_time
 		FROM accounts a

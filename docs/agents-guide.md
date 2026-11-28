@@ -47,7 +47,7 @@ RFC → Orchestrator → Researcher → Coder по зонам → Reviewer → T
 |---|---|---|---|---|---|
 | Kimi Code CLI | `2.7.2`, live Research/Review/Test | `AGENTS.md`; `.kimi-code/agents/`; `.agents/skills/` + `.kimi-code/skills/` | `kimi --agent orchestrator`, `/skill:feature-pipeline <RFC>` | `/skill:full-audit <цель>` | `/status`, `/tasks`, `/reload` |
 | OpenCode V2 | `v2.2.6`, статическая схема | `AGENTS.md`; `.opencode/agents/`; `.agents/skills/` и `.claude/skills/` | Выбрать `orchestrator`, `/feature-pipeline <RFC>` | `/full-audit <цель>` | Список primary agents и `/`-команд в TUI |
-| Antigravity | клиент не установлен | `AGENTS.md`; `.agents/agents/`; `.agents/skills/` | Выбрать Orchestrator и дать путь RFC | Дать Orchestrator цель аудита | Settings → Projects → Customizations |
+| Antigravity | стандартный агент (1×) | `AGENTS.md`; встроенные `research`/`self`; `.agents/skills/` (без `.agents/agents/`) | Дефолтный агент: «Выполни feature-pipeline для `<RFC>`» | Дефолтный агент: «Выполни full-audit для …» | Settings → Projects → Customizations |
 | Codex | клиент не установлен | `AGENTS.md`; `.codex/agents/`; `.agents/skills/` | Основной поток = Orchestrator, вызвать named workers | Read-only parent, вызвать Reviewer/Tester | Проверить instructions и agent threads |
 | Claude Code | клиент не установлен | `CLAUDE.md` → `AGENTS.md`; `.claude/agents/`; `.claude/skills/` | `claude --agent orchestrator`, затем `/feature-pipeline <RFC>` | `/full-audit <цель>` | `/context all`, `/memory`, `/skills`, `/agents`/`/tasks` |
 
@@ -76,13 +76,13 @@ Permissions V2 используют ordered `permissions` и last-match-wins. У
 
 ### Antigravity
 
-1. Откройте проект и проверьте **Settings → Projects → Customizations** либо **Customizations → Installed**: должны быть пять custom agents и, после интеграции 3B, девять skills.
-2. Выберите main agent `orchestrator`. Передайте «Выполни feature-pipeline для `docs/rfc/<feature>.md`» или «Выполни full-audit для …».
-3. Используйте project permission preset **Default** с Terminal sandbox и подтверждением внешних действий. Не используйте Turbo. Для поведенческих проверок Coder выбирайте изолированный worktree.
-4. Проверяйте наследуемые parent permissions и diff после роли. Frontmatter agent не является независимым security boundary; субагенты наследуют часть safety-настроек родителя.
-5. `.agent/rules/` и `.agent/workflows/` — только legacy compatibility по исходному ТЗ. Canonical логика находится в docs и modern agents. Не добавляйте skill с именем `feature-pipeline` или `full-audit` в Antigravity, пока существует одноимённый legacy workflow: это создаст неоднозначный выбор. Долгосрочно legacy workflows требуют отдельной миграции.
-
-Tool names в agents соответствуют официальной схеме, но live discovery обязателен: Antigravity документирует риск зависания при неизвестном имени tool.
+1. **Запускайте Antigravity без `--agent` и без пользовательских агентов из `.agents/agents/*`:** кастомные агенты (`.agents/agents/*`, плагинные агенты и их субагенты) расходуют квоту в 4× быстрее. Директория `.agents/agents/` намеренно удалена; все правила перенесены в `AGENTS.md`, `docs/agents/roles/` и `.agents/skills/*`.
+2. **Агент по умолчанию** выступает Orchestrator (или исполнителем для простых задач) и делегирует роли только **встроенным субагентам** (стандартный тариф 1×):
+   - **Researcher:** встроенный `research` + `.agents/skills/go-researcher/SKILL.md` + `docs/agents/roles/researcher.md`.
+   - **Coder / Reviewer / Tester:** встроенный `self` + Task Packet + нужный скилл `.agents/skills/{zone-*,code-auditor,go-test-runner}/SKILL.md` + соответствующий `docs/agents/roles/*.md`.
+3. В чате передавайте задачу агенту по умолчанию: «Выполни feature-pipeline для `docs/rfc/<feature>.md`» или «Выполни full-audit для …».
+4. Используйте project permission preset **Default** с Terminal sandbox и подтверждением внешних действий. Не используйте Turbo. Для поведенческих проверок Coder выбирайте изолированный worktree.
+5. Проверяйте diff после роли (`git status --short`). `.agent/rules/` и `.agent/workflows/` сохранены как legacy compatibility.
 
 ### Codex
 

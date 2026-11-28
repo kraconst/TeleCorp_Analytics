@@ -1,11 +1,11 @@
 ---
 name: zone-integrations
-description: Zone Coder (Tier B) skill for GO_server external integrations in internal/telegram/ and future internal/ai/. Enforces interface isolation, context timeouts, FLOOD_WAIT/429 handling, graceful degradation, and secret safety.
+description: Zone Coder (Tier B) skill for GO_server external integrations in internal/telegram/ and internal/ai/. Enforces interface isolation, context timeouts, FLOOD_WAIT/429 handling, graceful degradation, and secret safety.
 ---
 
 # Zone Coder: External Integrations (`GO_server`)
 
-Implement scoped Telegram MTProto and LLM/AI client adapters strictly inside `internal/telegram/` and, when introduced by the RFC, `internal/ai/`, following the active RFC and Research Brief.
+Implement scoped Telegram MTProto and LLM/AI client adapters strictly inside `internal/telegram/` and `internal/ai/`, following the active RFC and Research Brief.
 
 ## Zone Boundaries & Hard Prohibitions
 

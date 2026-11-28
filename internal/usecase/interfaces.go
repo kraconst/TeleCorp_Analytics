@@ -15,7 +15,7 @@ type AccountRepository interface {
 	GetByID(ctx context.Context, id int64) (*domain.Account, error)
 	ListByCompany(ctx context.Context, companyID int64) ([]domain.Account, error)
 	ListByEmployee(ctx context.Context, employeeID int64) ([]domain.Account, error)
-	UpdateStatus(ctx context.Context, id int64, status domain.AccountStatus) error
+	UpdateStatus(ctx context.Context, companyID, id int64, status domain.AccountStatus) error
 	AssignEmployee(ctx context.Context, accountID, employeeID int64) error
 }
 
@@ -39,6 +39,7 @@ type TelegramDialog struct {
 	Name           string
 	Username       string
 	UnreadCount    int
+	LastMessageAt  time.Time
 }
 
 // TelegramAccountReader действует только внутри вызова TelegramSyncClient.WithAccount.
@@ -80,7 +81,7 @@ type EmployeeRepository interface {
 	GetByID(ctx context.Context, id int64) (*domain.Employee, error)
 	ListByCompany(ctx context.Context, companyID int64) ([]domain.Employee, error)
 	Update(ctx context.Context, emp domain.Employee) error
-	Deactivate(ctx context.Context, id int64) error
+	Deactivate(ctx context.Context, companyID, id int64) error
 }
 
 // CompanyRepository определяет контракт доступа к данным компании.

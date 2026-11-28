@@ -106,5 +106,5 @@ func (u *EmployeeUsecase) Deactivate(ctx context.Context, companyID, id int64) e
 	if emp.CompanyID != companyID {
 		return fmt.Errorf("%w: employee not found", domain.ErrNotFound)
 	}
-	return u.employees.Deactivate(ctx, id)
+	return u.employees.Deactivate(ctx, companyID, id)
 }

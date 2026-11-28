@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 	_ "time/tzdata"
 
@@ -232,7 +233,83 @@ func importTelegramMessages(ctx context.Context, tx *sqlx.Tx, accountID, chatID 
 			return 0, time.Time{}, err
 		}
 	}
+	if len(days) > 0 {
+		if err := refreshAccountDailyMetrics(ctx, tx, accountID, days, location); err != nil {
+			return 0, time.Time{}, err
+		}
+	}
 	return inserted, last, nil
+}
+
+func refreshAccountDailyMetrics(ctx context.Context, tx *sqlx.Tx, accountID int64, days []string, location *time.Location) error {
+	minDay, err := time.ParseInLocation(time.DateOnly, days[0], location)
+	if err != nil {
+		return fmt.Errorf("parse min stats day: %w", err)
+	}
+	maxDay, err := time.ParseInLocation(time.DateOnly, days[len(days)-1], location)
+	if err != nil {
+		return fmt.Errorf("parse max stats day: %w", err)
+	}
+	// Bound lower scan window to 30 days before the earliest affected day so cross-day bursts are captured
+	// without scanning years of historical messages on every sync.
+	windowStart := minDay.AddDate(0, 0, -30).UTC()
+	windowEnd := maxDay.AddDate(0, 0, 1).UTC()
+	const query = `
+		WITH chat_msgs AS (
+			SELECT
+				m.chat_id,
+				m.direction,
+				m.sent_at,
+				(m.sent_at AT TIME ZONE $4)::date AS local_day,
+				LAG(m.direction) OVER (PARTITION BY m.chat_id ORDER BY m.sent_at ASC, m.telegram_message_id ASC) AS prev_direction,
+				COUNT(*) FILTER (WHERE m.direction = 'out') OVER (
+					PARTITION BY m.chat_id
+					ORDER BY m.sent_at ASC, m.telegram_message_id ASC
+					ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+				) AS out_before
+			FROM messages m
+			JOIN chats c ON c.id = m.chat_id
+			WHERE c.account_id = $1
+			  AND m.sent_at >= $2
+			  AND m.sent_at < $3
+		), burst_starts AS (
+			SELECT
+				chat_id,
+				out_before,
+				MIN(sent_at) AS first_in_at
+			FROM chat_msgs
+			WHERE direction = 'in'
+			GROUP BY chat_id, out_before
+		), day_metrics AS (
+			SELECT
+				cm.local_day AS day,
+				COUNT(DISTINCT cm.chat_id) AS active_chats,
+				COALESCE(
+					AVG(EXTRACT(EPOCH FROM (cm.sent_at - bs.first_in_at)) * 1000000000.0)
+					FILTER (
+						WHERE cm.direction = 'out'
+						  AND cm.prev_direction = 'in'
+						  AND bs.first_in_at IS NOT NULL
+						  AND cm.sent_at >= bs.first_in_at
+					),
+					0
+				)::BIGINT AS avg_response_time
+			FROM chat_msgs cm
+			LEFT JOIN burst_starts bs
+			  ON bs.chat_id = cm.chat_id AND bs.out_before = cm.out_before
+			WHERE cm.local_day = ANY(string_to_array($5, ',')::date[])
+			GROUP BY cm.local_day
+		)
+		UPDATE account_daily_stats ads
+		SET active_chats = dm.active_chats,
+		    avg_response_time = dm.avg_response_time
+		FROM day_metrics dm
+		WHERE ads.account_id = $1 AND ads.day = dm.day
+	`
+	if _, err := tx.ExecContext(ctx, query, accountID, windowStart, windowEnd, location.String(), strings.Join(days, ",")); err != nil {
+		return mapPgError(fmt.Errorf("refresh account daily metrics: %w", err))
+	}
+	return nil
 }
 
 func syncDayStats(daily map[string]*domain.AccountDailyStats, localTime time.Time) *domain.AccountDailyStats {

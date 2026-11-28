@@ -92,6 +92,13 @@ func run(ctx context.Context, args []string) error {
 	}
 	defer db.Close()
 	log.Println("Connected to PostgreSQL successfully")
+
+	// Run pending migrations automatically with advisory lock before CLI import or HTTP server startup.
+	if err := postgres.RunMigrations(db, "migrations"); err != nil {
+		return fmt.Errorf("database migrations failed: %w", err)
+	}
+	log.Println("Database migrations applied successfully")
+
 	accountRepo := postgres.NewAccountStorage(db)
 	if len(args) > 0 {
 		return runTelegramImport(ctx, cfg.Telegram, accountRepo, enrollment)
@@ -101,12 +108,6 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("AI client configuration failed: %w", err)
 	}
-
-	// Run pending migrations automatically with advisory lock
-	if err := postgres.RunMigrations(db, "migrations"); err != nil {
-		return fmt.Errorf("database migrations failed: %w", err)
-	}
-	log.Println("Database migrations applied successfully")
 
 	employeeRepo := postgres.NewEmployeeStorage(db)
 	messageRepo := postgres.NewMessageStorage(db)

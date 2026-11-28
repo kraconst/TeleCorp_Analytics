@@ -4,3 +4,10 @@
 *.exe
 server
 .env
+**/.env
+.env.*
+!.env.example
+var/
+**/*.session
+**/*.session.*
+.agents/teamwork/

@@ -282,4 +282,15 @@ func TestConfig_FormatDoesNotLeakDBOrTelegramSecrets(t *testing.T) {
 			}
 		}
 	}
+
+	// CRIT-05: typo without colon in scheme must still redact credentials.
+	if got := maskProxyURL("http//user:topsecret@proxy.local:8080"); got != "[REDACTED]" || strings.Contains(got, "topsecret") {
+		t.Fatalf("expected [REDACTED] for malformed scheme proxy URL, got %q", got)
+	}
+
+	// HIGH-01: special characters in DB password must be URL-encoded in DSN.
+	dsn := (DBConfig{Host: "localhost", Port: "5432", User: "u", Password: "p@ss?w#rd", Name: "db", SSLMode: "disable"}).DSN()
+	if !strings.Contains(dsn, "p%40ss%3Fw%23rd") {
+		t.Fatalf("expected URL-encoded password in DSN, got %q", dsn)
+	}
 }

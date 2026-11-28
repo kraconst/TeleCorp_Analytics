@@ -99,7 +99,7 @@ func TestWithAccountPreflightClassifiesOnlyMissingSession(t *testing.T) {
 		{name: "missing account", loadErr: domain.ErrNotFound, wantErr: domain.ErrNotFound},
 		{name: "missing session", wantErr: usecase.ErrTelegramSessionInvalid, status: domain.StatusDisconnected},
 		{name: "failed status write", statusErr: statusFailure, wantErr: statusFailure, status: domain.StatusDisconnected},
-		{name: "unreadable ciphertext", value: []byte{1, 2, 3}, wantErr: errUnreadableAccountSession},
+		{name: "unreadable ciphertext", value: []byte{1, 2, 3}, wantErr: errUnreadableAccountSession, status: domain.StatusDisconnected},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &sessionRepositoryStub{value: tc.value, loadErr: tc.loadErr, statusErr: tc.statusErr}

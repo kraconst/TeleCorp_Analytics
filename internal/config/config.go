@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -23,7 +24,10 @@ const (
 	DefaultAIMaxChars    = 12000
 )
 
-const DefaultAlertCheckInterval = time.Minute
+const (
+	DefaultAlertCheckInterval      = time.Minute
+	DefaultTelegramSyncInitialDays = 30
+)
 
 type DBConfig struct {
 	Host     string
@@ -35,8 +39,18 @@ type DBConfig struct {
 }
 
 func (c DBConfig) DSN() string {
-	return fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		c.User, c.Password, c.Host, c.Port, c.Name, c.SSLMode)
+	u := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(c.User, c.Password),
+		Host:   net.JoinHostPort(c.Host, c.Port),
+		Path:   "/" + c.Name,
+	}
+	if c.SSLMode != "" {
+		q := url.Values{}
+		q.Set("sslmode", c.SSLMode)
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
 }
 
 func (c DBConfig) String() string {
@@ -97,13 +111,14 @@ type Config struct {
 }
 
 type TelegramConfig struct {
-	APIID          int
-	APIHash        string
-	Proxy          string
-	SessionKey     []byte
-	SyncEnabled    bool
-	SyncInterval   time.Duration
-	SyncBatchLimit int
+	APIID           int
+	APIHash         string
+	Proxy           string
+	SessionKey      []byte
+	SyncEnabled     bool
+	SyncInterval    time.Duration
+	SyncBatchLimit  int
+	SyncInitialDays int
 }
 
 // Configured reports whether a manual sync can use the server credentials.
@@ -112,13 +127,13 @@ func (c TelegramConfig) Configured() bool {
 }
 
 func (c TelegramConfig) String() string {
-	return fmt.Sprintf("{APIID:%d APIHash:%s Proxy:%s SessionKey:%s SyncEnabled:%t SyncInterval:%s SyncBatchLimit:%d}",
-		c.APIID, maskSecret(c.APIHash), maskProxyURL(c.Proxy), maskBytes(c.SessionKey), c.SyncEnabled, c.SyncInterval, c.SyncBatchLimit)
+	return fmt.Sprintf("{APIID:%d APIHash:%s Proxy:%s SessionKey:%s SyncEnabled:%t SyncInterval:%s SyncBatchLimit:%d SyncInitialDays:%d}",
+		c.APIID, maskSecret(c.APIHash), maskProxyURL(c.Proxy), maskBytes(c.SessionKey), c.SyncEnabled, c.SyncInterval, c.SyncBatchLimit, c.SyncInitialDays)
 }
 
 func (c TelegramConfig) GoString() string {
-	return fmt.Sprintf("config.TelegramConfig{APIID:%d, APIHash:%q, Proxy:%q, SessionKey:%q, SyncEnabled:%t, SyncInterval:%d, SyncBatchLimit:%d}",
-		c.APIID, maskSecret(c.APIHash), maskProxyURL(c.Proxy), maskBytes(c.SessionKey), c.SyncEnabled, int64(c.SyncInterval), c.SyncBatchLimit)
+	return fmt.Sprintf("config.TelegramConfig{APIID:%d, APIHash:%q, Proxy:%q, SessionKey:%q, SyncEnabled:%t, SyncInterval:%d, SyncBatchLimit:%d, SyncInitialDays:%d}",
+		c.APIID, maskSecret(c.APIHash), maskProxyURL(c.Proxy), maskBytes(c.SessionKey), c.SyncEnabled, int64(c.SyncInterval), c.SyncBatchLimit, c.SyncInitialDays)
 }
 
 func maskSecret(s string) string {
@@ -141,7 +156,7 @@ func maskProxyURL(raw string) string {
 		return "[EMPTY]"
 	}
 	u, err := url.Parse(raw)
-	if err != nil {
+	if err != nil || u.Scheme == "" || u.Host == "" {
 		return "[REDACTED]"
 	}
 	if u.User != nil {
@@ -220,6 +235,10 @@ func loadTelegram() TelegramConfig {
 	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TELEGRAM_SYNC_BATCH_LIMIT"))); err == nil && value >= 1 && value <= 100 {
 		batchLimit = value
 	}
+	initialDays := DefaultTelegramSyncInitialDays
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("TELEGRAM_SYNC_INITIAL_DAYS"))); err == nil && value > 0 {
+		initialDays = value
+	}
 
 	proxy := strings.TrimSpace(os.Getenv("TELEGRAM_PROXY"))
 	useProxy, useProxyErr := strconv.ParseBool(strings.TrimSpace(os.Getenv("USE_PROXY")))
@@ -232,12 +251,13 @@ func loadTelegram() TelegramConfig {
 		key = nil
 	}
 	cfg := TelegramConfig{
-		APIID:          int(apiID),
-		APIHash:        strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
-		Proxy:          proxy,
-		SessionKey:     key,
-		SyncInterval:   interval,
-		SyncBatchLimit: batchLimit,
+		APIID:           int(apiID),
+		APIHash:         strings.TrimSpace(os.Getenv("TELEGRAM_API_HASH")),
+		Proxy:           proxy,
+		SessionKey:      key,
+		SyncInterval:    interval,
+		SyncBatchLimit:  batchLimit,
+		SyncInitialDays: initialDays,
 	}
 	enabled, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("TELEGRAM_SYNC_ENABLED")))
 	cfg.SyncEnabled = enabled && cfg.Configured()

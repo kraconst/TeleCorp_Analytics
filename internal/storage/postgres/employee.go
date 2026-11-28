@@ -89,9 +89,9 @@ func (s *EmployeeStorage) Update(ctx context.Context, emp domain.Employee) error
 	return nil
 }
 
-func (s *EmployeeStorage) Deactivate(ctx context.Context, id int64) error {
-	query := `UPDATE employees SET is_active = FALSE WHERE id = $1`
-	res, err := s.db.ExecContext(ctx, query, id)
+func (s *EmployeeStorage) Deactivate(ctx context.Context, companyID, id int64) error {
+	query := `UPDATE employees SET is_active = FALSE WHERE id = $1 AND company_id = $2`
+	res, err := s.db.ExecContext(ctx, query, id, companyID)
 	if err != nil {
 		return mapPgError(fmt.Errorf("deactivate employee: %w", err))
 	}
